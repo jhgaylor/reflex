@@ -51,6 +51,7 @@ describe("toTurnView", () => {
       number: 1,
       prompt: "[via sms] book the dentist",
       status: "completed",
+      origin: "user",
       at: "2026-08-25T00:00:00Z",
       endedAt: null,
       text: 'Booked.\n```reflex\n{"jobs":[]}\n```',

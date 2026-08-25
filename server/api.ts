@@ -135,6 +135,14 @@ export function buildApi(deps: ApiDeps): Handler {
       return json(await me(user), 200, { "set-cookie": sessionCookie(token, { secure }) });
     }
 
+    // Local development only (REFLEX_DEV=1): adopt a session token minted by
+    // curl, so a browser can be signed in without the OAuth client existing.
+    if (path === "/api/dev/session" && req.method === "POST" && process.env.REFLEX_DEV === "1") {
+      const b = (await req.json().catch(() => ({}))) as { token?: string };
+      if (!b.token || !(await store.userForSession(sql, b.token))) return fail(new ReflexError(401, "signed_out", "No such session."));
+      return new Response(null, { status: 204, headers: { "set-cookie": sessionCookie(b.token, { secure }) } });
+    }
+
     const token = sessionToken(req);
     const user = token ? await store.userForSession(sql, token) : null;
 

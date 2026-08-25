@@ -39,7 +39,7 @@ export interface TurnView {
   /** what the owner (or a routine, or a text) said */
   prompt: string;
   /** where the prompt came from */
-  via: "you" | "sms" | "email" | "routine";
+  via: "you" | "sms" | "email" | "routine" | "reflex";
   /** the reply, block stripped; grows while the turn runs */
   reply: string;
   status: "pending" | "running" | "completed" | "failed" | "interrupted";

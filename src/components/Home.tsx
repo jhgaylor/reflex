@@ -99,25 +99,30 @@ function Turn({ turn }: { turn: TurnView }) {
   const running = turn.status === "running" || turn.status === "pending";
   const [showSteps, setShowSteps] = useState(false);
   const lastStep = turn.steps[turn.steps.length - 1];
+  const steps = collapse(turn.steps);
   return (
     <div className="turn">
-      <div className={`bubble you ${turn.via}`}>
-        {turn.via !== "you" && <span className="via">{turn.via === "routine" ? "routine" : `by ${turn.via}`}</span>}
-        <p>{turn.prompt.replace(/^\[via \w+\]\s*/, "")}</p>
-        <time className="fineprint">{relativeTime(turn.at)}</time>
-      </div>
+      {turn.via === "reflex" ? (
+        <div className="fineprint center">Reflex kept going on its own · {relativeTime(turn.at)}</div>
+      ) : (
+        <div className={`bubble you ${turn.via}`}>
+          {turn.via !== "you" && <span className="via">{turn.via === "routine" ? "routine" : `by ${turn.via}`}</span>}
+          <p>{turn.prompt.replace(/^\[via \w+\]\s*/, "")}</p>
+          <time className="fineprint">{relativeTime(turn.at)}</time>
+        </div>
+      )}
       {(turn.reply || running || turn.status === "failed") && (
         <div className={`bubble them${running ? " running" : ""}`}>
           {turn.reply ? <Md src={turn.reply} /> : running ? <p className="fineprint">{lastStep ?? "On it…"}</p> : null}
           {turn.status === "failed" && !turn.reply && <p className="fineprint">Reflex hit a problem with this one and stopped. Ask again, or ask it what went wrong.</p>}
-          {turn.steps.length > 0 && (
+          {steps.length > 0 && (
             <div className="steps">
               <button className="linkish" onClick={() => setShowSteps((s) => !s)}>
-                {showSteps ? "hide what it did" : `${turn.steps.length} step${turn.steps.length === 1 ? "" : "s"}`}
+                {showSteps ? "hide what it did" : `${steps.length} step${steps.length === 1 ? "" : "s"}`}
               </button>
               {showSteps && (
                 <ul>
-                  {turn.steps.map((s, i) => (
+                  {steps.map((s, i) => (
                     <li key={i}>{s}</li>
                   ))}
                 </ul>
@@ -128,6 +133,17 @@ function Turn({ turn }: { turn: TurnView }) {
       )}
     </div>
   );
+}
+
+/** "Searched the web" six times in a row reads as one line with a count. */
+function collapse(steps: string[]): string[] {
+  const out: Array<{ text: string; n: number }> = [];
+  for (const s of steps) {
+    const last = out[out.length - 1];
+    if (last && last.text === s) last.n++;
+    else out.push({ text: s, n: 1 });
+  }
+  return out.map((s) => (s.n > 1 ? `${s.text} (×${s.n})` : s.text));
 }
 
 function Composer({ working, onSend, onStop }: { working: boolean; onSend: (t: string) => Promise<void>; onStop: () => void }) {

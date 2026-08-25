@@ -146,6 +146,8 @@ export interface FoldedTurn {
   number: number;
   prompt: string;
   status: TurnView["status"];
+  /** "autonomous" when the runtime continued on its own, not the owner */
+  origin: "user" | "autonomous";
   at: string;
   endedAt: string | null;
   /** full reply text, block included */
@@ -176,6 +178,7 @@ export async function fold(f: Fountain, conversationId: string): Promise<FoldedT
         number: t.turn_number,
         prompt: t.prompt,
         status: t.status,
+        origin: t.origin === "autonomous" ? "autonomous" : "user",
         at: t.started_at ?? t.inserted_at ?? new Date(0).toISOString(),
         endedAt: t.ended_at ?? null,
         text: acc.text,
@@ -228,7 +231,7 @@ function safeHost(url: string): string | null {
 }
 
 export function toTurnView(t: FoldedTurn): TurnView {
-  const via = t.prompt.match(/^\[via (sms|email|routine)\]/)?.[1] as TurnView["via"] | undefined;
+  const via = t.origin === "autonomous" ? "reflex" : (t.prompt.match(/^\[via (sms|email|routine)\]/)?.[1] as TurnView["via"] | undefined);
   return {
     id: t.id,
     number: t.number,
