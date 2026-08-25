@@ -1,0 +1,28 @@
+# Postgres for Reflex. CNPG generates Secret `reflex-pg-app` (`uri` is the
+# postgres:// URL the Deployment reads as DATABASE_URL).
+#
+# Reflex holds each person's Fountain key sealed, plus the things Fountain has
+# no table for: jobs, memory, notifications, connected-account labels, and
+# messages queued for a busy assistant. Single instance; Longhorn replicates
+# the volume.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: reflex-pg
+  namespace: reflex
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6-minimal-trixie
+  bootstrap:
+    initdb:
+      database: reflex_app
+      owner: reflex
+  storage:
+    storageClass: longhorn
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

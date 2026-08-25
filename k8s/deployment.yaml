@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reflex
+  namespace: reflex
+  labels:
+    app: reflex
+  annotations:
+    secrets.infisical.com/auto-reload: "true"
+spec:
+  # One replica on purpose: each signed-in person has one watcher (a Fountain
+  # stream) and the outbox drain assumes a single drainer. Two pods would
+  # double-apply every reply.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: reflex
+  template:
+    metadata:
+      labels:
+        app: reflex
+    spec:
+      containers:
+        - name: web
+          # Pinned to an immutable sha tag by .github/workflows/build.yml.
+          image: ghcr.io/jhgaylor/reflex:sha-0000000000000000000000000000000000000000
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: reflex-env
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: reflex-pg-app
+                  key: uri
+            - name: FOUNTAIN_URL
+              value: https://fountain.inevitable.fyi
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 30m, memory: 160Mi }
+            limits: { memory: 400Mi }

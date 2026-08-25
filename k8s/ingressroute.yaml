@@ -1,0 +1,38 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: reflex
+  namespace: reflex
+  labels:
+    app: reflex
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`reflex.inevitable.fyi`)"
+      kind: Rule
+      services:
+        - name: reflex
+          port: 80
+  tls:
+    secretName: reflex-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: reflex-http
+  namespace: reflex
+  labels:
+    app: reflex
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: "Host(`reflex.inevitable.fyi`)"
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: default
+      services:
+        - name: reflex
+          port: 80
