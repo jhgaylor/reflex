@@ -20,7 +20,7 @@ export function Home(props: {
   onDrop: (key: string) => void;
 }) {
   const { thread, jobs, assistant } = props;
-  const working = assistant.state === "working" || assistant.state === "waking";
+  const working = assistant.state === "working" || assistant.state === "waking" || assistant.state === "trouble";
   const open = jobs.filter((j) => j.status !== "done" && j.status !== "dropped").sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
   const closed = jobs.filter((j) => j.status === "done" || j.status === "dropped").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const [showClosed, setShowClosed] = useState(false);

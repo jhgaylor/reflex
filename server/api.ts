@@ -185,7 +185,9 @@ export function buildApi(deps: ApiDeps): Handler {
         const convId = t?.conversation.id ?? user.conversationId;
         if (t && convId !== user.conversationId) await store.updateUser(sql, user.id, { conversationId: convId });
         const turns = convId ? (await fold(f, convId)).map(toTurnView) : [];
-        const view: ThreadView = { turns, assistant: presence(t), queued: await store.queued(sql, user.id) };
+        let assistant = presence(t);
+        if (stuck(turns)) assistant = { state: "trouble", label: "Reflex looks stuck. Press Stop to start a fresh thread.", hired: true };
+        const view: ThreadView = { turns, assistant, queued: await store.queued(sql, user.id) };
         return json(view);
       }
       if (path === "/api/messages" && req.method === "POST") {
@@ -197,10 +199,29 @@ export function buildApi(deps: ApiDeps): Handler {
         return json(await send(u, f, text), 202);
       }
       if (path === "/api/stop" && req.method === "POST") {
-        if (!user.agentId) return new Response(null, { status: 204 });
-        const conv = await (await clientFor(user)).team.conversation(user.agentId);
-        await conv.interrupt();
-        return new Response(null, { status: 204 });
+        if (!user.agentId) return json({ mode: "idle" });
+        const f = await clientFor(user);
+        // Interrupt first. If Fountain refuses (BinaryBourbon/fountain#1179: an
+        // autonomous turn that never ends and 404s on interrupt) or the turn
+        // is still running a few seconds later, retire the thread instead:
+        // Reflex keeps its computer and notes, the owner gets an assistant
+        // that answers.
+        let stopped = false;
+        try {
+          const conv = await f.team.conversation(user.agentId);
+          await conv.interrupt();
+          await Bun.sleep(4000);
+          stopped = (await conv.status()) !== "running";
+        } catch (err) {
+          console.warn(`stop ${user.id}: interrupt failed (${translate(err).code}); starting a fresh thread`);
+        }
+        if (stopped) return json({ mode: "stopped" });
+        const fresh = await f.team.freshConversation(user.agentId);
+        const id = (fresh as { id?: string }).id ?? (await roster(f, user.agentId))?.conversation.id ?? null;
+        if (id) await store.updateUser(sql, user.id, { conversationId: id });
+        watchers.start(user.id);
+        hub.emit(user.id, { type: "turn", state: "interrupted", turnId: null });
+        return json({ mode: "fresh" });
       }
       if (path === "/api/stream" && req.method === "GET") return stream(hub, user.id);
 
@@ -331,9 +352,18 @@ export function buildApi(deps: ApiDeps): Handler {
     } catch (err) {
       const e = translate(err);
       if (e.status >= 500) console.error(`${req.method} ${path}:`, err);
+      else if (e.status !== 401) console.warn(`${req.method} ${path}: ${e.status} ${e.code}`);
       return fail(e);
     }
   };
+}
+
+/** A turn "running" for 10+ minutes with nothing said is a wedged runtime, not work. */
+const STUCK_MS = 10 * 60 * 1000;
+function stuck(turns: import("../shared/api").TurnView[]): boolean {
+  const last = turns[turns.length - 1];
+  if (!last || last.status !== "running" || last.reply || last.steps.length > 0) return false;
+  return Date.now() - Date.parse(last.at) > STUCK_MS;
 }
 
 function jobView(r: store.JobRow): JobView {

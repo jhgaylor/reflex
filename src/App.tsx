@@ -148,6 +148,17 @@ export function App() {
     [reloadThread, say],
   );
 
+  const stop = useCallback(async () => {
+    try {
+      const r = await api.stop();
+      if (r.mode === "fresh") say("Reflex was stuck, so it started a fresh thread. It kept its computer and its notes.");
+      else if (r.mode === "stopped") say("Stopped.");
+      await reloadThread();
+    } catch (err) {
+      say(err instanceof Error ? err.message : String(err));
+    }
+  }, [reloadThread, say]);
+
   const signOut = useCallback(async () => {
     await api.signOut().catch(() => undefined);
     setMe(null);
@@ -197,7 +208,7 @@ export function App() {
       {toast && <div className="toast">{toast}</div>}
 
       <main className="page">
-        {tab === "home" && <Home thread={thread} jobs={jobs} assistant={assistant} onSend={send} onStop={() => api.stop().catch(() => undefined)} onDrop={(k) => api.dropJob(k).then(reloadJobs).catch((e) => say(e.message))} />}
+        {tab === "home" && <Home thread={thread} jobs={jobs} assistant={assistant} onSend={send} onStop={() => void stop()} onDrop={(k) => api.dropJob(k).then(reloadJobs).catch((e) => say(e.message))} />}
         {tab === "routines" && <Routines say={say} />}
         {tab === "connections" && <Connections say={say} />}
         {tab === "memory" && <Memory say={say} />}

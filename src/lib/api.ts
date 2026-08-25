@@ -66,7 +66,7 @@ export const api = {
 
   thread: () => call<ThreadView>("GET", "/api/thread"),
   send: (text: string) => call<{ queued: boolean }>("POST", "/api/messages", { text }),
-  stop: () => call<void>("POST", "/api/stop"),
+  stop: () => call<{ mode: "stopped" | "fresh" | "idle" }>("POST", "/api/stop"),
 
   jobs: () => call<JobView[]>("GET", "/api/jobs"),
   dropJob: (key: string) => call<JobView>("PATCH", `/api/jobs/${encodeURIComponent(key)}`, { status: "dropped" }),
