@@ -100,8 +100,15 @@ const SCHEMA: string[] = [
   `create index if not exists notifications_user_idx on notifications (user_id, created_at desc)`,
 ];
 
+/** A real template object for a fixed statement; the driver wants `raw`. */
+export function fixed(text: string): TemplateStringsArray {
+  const strings = [text] as string[] & { raw: string[] };
+  strings.raw = [text];
+  return strings as unknown as TemplateStringsArray;
+}
+
 export async function migrate(sql: Sql): Promise<void> {
-  for (const stmt of SCHEMA) await sql([stmt] as unknown as TemplateStringsArray);
+  for (const stmt of SCHEMA) await sql(fixed(stmt));
 }
 
 // ── users and sessions ─────────────────────────────────────────────────────

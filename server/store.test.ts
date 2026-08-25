@@ -16,7 +16,7 @@ describe.skipIf(!url)("store", () => {
   beforeAll(async () => {
     sql = connect(url!);
     for (const t of ["cursors", "outbox", "accounts", "notifications", "memory", "jobs", "sessions", "users"]) {
-      await sql([`drop table if exists ${t} cascade`] as unknown as TemplateStringsArray);
+      await sql(store.fixed(`drop table if exists ${t} cascade`));
     }
     await store.migrate(sql);
   });
