@@ -1,4 +1,4 @@
-# Builds the Reflex image, pushes it to ghcr.io/managoat/reflex, then pins
+# Builds the Reflex image, pushes it to ghcr.io/jhgaylor/reflex, then pins
 # the immutable sha tag into k8s/deployment.yaml so Flux (home-cloud) rolls
 # the exact image that was just built. Multi-arch because home-cloud's k3s
 # nodes are arm64 Lima VMs. The SPA bundle is built on the runner (bun), so

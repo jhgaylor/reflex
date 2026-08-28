@@ -9,7 +9,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: "Host(`reflex.demo.managoat.com`)"
+    - match: "Host(`reflex.inevitable.fyi`)"
       kind: Rule
       services:
         - name: reflex
@@ -28,7 +28,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: "Host(`reflex.demo.managoat.com`)"
+    - match: "Host(`reflex.inevitable.fyi`)"
       kind: Rule
       middlewares:
         - name: redirect-https

@@ -6,7 +6,7 @@ dentist, lowers the cable bill, sweeps the inbox at 2pm, watches for tickets
 and texts you the moment they're back.
 
 Built on [Fountain](https://github.com/BinaryBourbon/fountain). Hosted at
-[reflex.demo.managoat.com](https://reflex.demo.managoat.com).
+[reflex.inevitable.fyi](https://reflex.inevitable.fyi).
 
 ## What it is, in Fountain terms
 
@@ -50,7 +50,7 @@ only with `TEST_DATABASE_URL` set (CI sets it).
 
 ## Ship
 
-`build.yml` builds the SPA, pushes `ghcr.io/managoat/reflex` (amd64+arm64)
+`build.yml` builds the SPA, pushes `ghcr.io/jhgaylor/reflex` (amd64+arm64)
 and pins the sha into `k8s/deployment.yaml`; Flux in `jhgaylor/home-cloud`
 rolls it. The Bun image serves `dist/` and the API on one port. Postgres is a
 CNPG cluster in the same namespace; `REFLEX_SECRET` comes from Infisical
