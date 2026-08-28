@@ -81,7 +81,7 @@ export function Settings(props: { me: Me; onUpdated: (m: Me) => void; onSignOut:
       </button>
       <p className="fineprint">Signing out on this device does not stop Reflex. Its jobs and routines keep going.</p>
       <p className="fineprint">
-        Reflex runs on <a href="https://github.com/BinaryBourbon/fountain">Fountain</a> · <a href="https://github.com/jhgaylor/reflex">source</a> · {__APP_COMMIT__}
+        Reflex runs on <a href="https://github.com/BinaryBourbon/fountain">Fountain</a> · <a href="https://github.com/managoat/reflex">source</a> · {__APP_COMMIT__}
       </p>
     </div>
   );
