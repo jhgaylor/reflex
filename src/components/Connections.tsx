@@ -96,70 +96,71 @@ export function TextingPanel({ view, onChange, say }: { view: ConnectionsView; o
   );
 }
 
-/** Sign in once — Gmail today — and Reflex gets the tools without ever holding the password. */
+/** Sign in once and Reflex gets the tools without ever holding the password. Services Fountain cannot connect yet show as "soon". */
 export function ServicesPanel({ view, onChange, say }: { view: ConnectionsView; onChange: (v: ConnectionsView) => void; say: (s: string) => void }) {
   const s = view.services;
   const [busy, setBusy] = useState<string | null>(null);
-  if (!s.available && s.connected.length === 0) {
-    if (s.offered.length === 0 && !s.reason) return null;
-    return (
-      <div className="panel muted">
-        <p className="fineprint">{s.reason ?? "Signing in to services is not available on this account yet."}</p>
-      </div>
-    );
-  }
-  if (s.offered.length === 0 && s.connected.length === 0) return null;
+  if (s.groups.length === 0) return null;
+  const anythingLive = s.groups.some((g) => g.services.some((sv) => sv.state !== "soon"));
+
+  const drop = (sv: { connectionId: string | null; label: string }, done: string) => {
+    if (!sv.connectionId) return;
+    setBusy(sv.connectionId);
+    api
+      .disconnectService(sv.connectionId)
+      .then((v) => {
+        onChange(v);
+        say(done);
+      })
+      .catch((e: Error) => say(e.message))
+      .finally(() => setBusy(null));
+  };
+
   return (
     <div className="panel">
-      {s.connected.length > 0 && (
-        <ul className="accounts">
-          {s.connected.map((c) => {
-            const drop = (done: string) => {
-              setBusy(c.id);
-              api
-                .disconnectService(c.id)
-                .then((v) => {
-                  onChange(v);
-                  say(done);
-                })
-                .catch((e: Error) => say(e.message))
-                .finally(() => setBusy(null));
-            };
-            return (
-              <li key={c.id}>
-                <b>{c.label}</b> <span className="fineprint mono">{c.email}</span>
-                {c.revoked ? (
-                  <>
-                    <span className="error small">signed out</span>
-                    {c.connectUrl && (
-                      <a className="linkish" href={c.connectUrl} target="_blank" rel="noreferrer">
-                        connect again
-                      </a>
-                    )}
-                    <button className="linkish" disabled={busy === c.id} onClick={() => drop(`${c.label} is gone.`)}>
-                      remove
-                    </button>
-                  </>
-                ) : (
-                  <button className="linkish" disabled={busy === c.id} onClick={() => drop(`${c.label} is disconnected.`)}>
+      {s.groups.map((g) => (
+        <div className="svc-group" key={g.kind}>
+          <h3>{g.title}</h3>
+          <ul className="accounts">
+            {g.services.map((sv) => (
+              <li key={sv.id}>
+                <b>{sv.label}</b>
+                {sv.email && <span className="fineprint mono">{sv.email}</span>}
+                {sv.state === "connected" && (
+                  <button className="linkish" disabled={busy === sv.connectionId} onClick={() => drop(sv, `${sv.label} is disconnected.`)}>
                     disconnect
                   </button>
                 )}
+                {sv.state === "revoked" && (
+                  <>
+                    <span className="error small">signed out</span>
+                    {sv.connectUrl && (
+                      <a className="linkish" href={sv.connectUrl} target="_blank" rel="noreferrer">
+                        connect again
+                      </a>
+                    )}
+                    <button className="linkish" disabled={busy === sv.connectionId} onClick={() => drop(sv, `${sv.label} is gone.`)}>
+                      remove
+                    </button>
+                  </>
+                )}
+                {sv.state === "offered" && sv.connectUrl && (
+                  <a className="ghost" href={sv.connectUrl} target="_blank" rel="noreferrer">
+                    Connect
+                  </a>
+                )}
+                {sv.state === "soon" && (
+                  <span className="soon" title="Reflex cannot connect this one yet.">
+                    soon
+                  </span>
+                )}
               </li>
-            );
-          })}
-        </ul>
-      )}
-      {s.offered.length > 0 && (
-        <div className="chips">
-          {s.offered.map((p) => (
-            <a key={p.provider} className="ghost" href={p.connectUrl} target="_blank" rel="noreferrer">
-              Connect {p.label}
-            </a>
-          ))}
+            ))}
+          </ul>
         </div>
-      )}
-      <p className="fineprint">You sign in in a new tab; Reflex gets the tools, never your password. This page catches up when you come back.</p>
+      ))}
+      {s.reason && <p className="fineprint">{s.reason}</p>}
+      {anythingLive && <p className="fineprint">You sign in in a new tab; Reflex gets the tools, never your password. This page catches up when you come back.</p>}
     </div>
   );
 }

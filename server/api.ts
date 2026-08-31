@@ -4,10 +4,10 @@
  * key, and translates both ways.
  */
 import { Fountain } from "@agentshit/fountain-sdk";
-import type { ConnectionsView, JobView, Me, MemoryView, NotificationView, PlanView, StreamEvent, ThreadView } from "../shared/api";
+import type { ConnectionsView, JobView, Me, MemoryView, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, relayedPrompt, type Guardrails, type Profile } from "../shared/spec";
-import { busy, client, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type Contact } from "./fountain";
+import { busy, client, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact } from "./fountain";
 import { clearedCookie, newSessionToken, secureFor, sessionCookie, sessionToken } from "./session";
 import * as store from "./store";
 import type { Sql, User } from "./store";
@@ -118,30 +118,63 @@ export function buildApi(deps: ApiDeps): Handler {
    * is actually connected.
    */
   const servicesView = async (u: User, f: Fountain): Promise<ConnectionsView["services"]> => {
-    let s: Awaited<ReturnType<typeof services>>;
+    let s: Awaited<ReturnType<typeof services>> = null;
+    let reason: string | null = null;
     try {
       s = await services(f);
+      if (!s) reason = "Signing in to services is not available on this account yet.";
     } catch {
-      return { available: false, reason: "Could not check which services can be connected right now.", offered: [], connected: [] };
+      reason = "Could not check which services can be connected right now.";
     }
-    if (!s) return { available: false, reason: "Signing in to services is not available on this account yet.", offered: [], connected: [] };
-    if (u.agentId) await syncServices(f, u.agentId, s.connections).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
-    const connectUrl = (provider: string) => s!.providers.find((p) => p.provider === provider)?.connect_url ?? null;
-    return {
-      available: true,
-      reason: null,
-      offered: s.providers
-        .filter((p) => !s!.connections.some((c) => c.provider === p.provider && c.status === "active"))
-        .map((p) => ({ provider: p.provider, label: serviceLabel(p.provider), connectUrl: p.connect_url })),
-      connected: s.connections.map((c) => ({
+    const providers = s?.providers ?? [];
+    const conns = s?.connections ?? [];
+    if (s && u.agentId) await syncServices(f, u.agentId, conns).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+
+    const covers = (scopes: string[], hint: RegExp | null) => hint === null || scopes.some((sc) => hint.test(sc));
+    const toService = (c: CatalogService): ServiceView => {
+      const p = providers.find((x) => x.provider === c.provider);
+      const conn =
+        conns.find((x) => x.provider === c.provider && x.status === "active" && covers(x.scopes, c.scopeHint)) ??
+        conns.find((x) => x.provider === c.provider && covers(x.scopes, c.scopeHint));
+      const live = Boolean(p && covers(p.scopes, c.scopeHint));
+      const state: ServiceView["state"] = conn ? (conn.status === "active" ? "connected" : "revoked") : live ? "offered" : "soon";
+      return {
         id: c.id,
-        provider: c.provider,
-        label: serviceLabel(c.provider),
-        email: c.account_email,
-        revoked: c.status === "revoked",
-        connectUrl: c.status === "revoked" ? connectUrl(c.provider) : null,
-      })),
+        label: c.label,
+        state,
+        email: conn?.account_email ?? null,
+        connectionId: conn?.id ?? null,
+        connectUrl: state === "offered" || state === "revoked" ? (p?.connect_url ?? null) : null,
+      };
     };
+    const groups = SERVICE_KINDS.map((k) => ({
+      kind: k.kind as string,
+      title: k.title,
+      services: SERVICE_CATALOG.filter((c) => c.kind === k.kind).map(toService),
+    }));
+
+    // A provider or connection no catalog row claimed still shows, so a
+    // Fountain that grows something we did not predict is never invisible.
+    const claimed = new Set(groups.flatMap((g) => g.services.map((sv) => sv.connectionId)).filter(Boolean));
+    const other: ServiceView[] = conns
+      .filter((c) => !claimed.has(c.id))
+      .map((c) => ({
+        id: `conn-${c.id}`,
+        label: serviceLabel(c.provider),
+        state: c.status === "active" ? "connected" : "revoked",
+        email: c.account_email,
+        connectionId: c.id,
+        connectUrl: c.status === "revoked" ? (providers.find((p) => p.provider === c.provider)?.connect_url ?? null) : null,
+      }));
+    for (const p of providers) {
+      const known = SERVICE_CATALOG.some((c) => c.provider === p.provider && covers(p.scopes, c.scopeHint));
+      if (!known && !conns.some((c) => c.provider === p.provider)) {
+        other.push({ id: `prov-${p.provider}`, label: serviceLabel(p.provider), state: "offered", email: null, connectionId: null, connectUrl: p.connect_url });
+      }
+    }
+    if (other.length > 0) groups.push({ kind: "other", title: "Also available", services: other });
+
+    return { available: Boolean(s), reason, groups };
   };
 
   return async (req, url) => {

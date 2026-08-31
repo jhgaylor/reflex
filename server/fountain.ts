@@ -290,9 +290,42 @@ function unwrap<T>(v: { data?: T } | T): T {
 
 // ── services: sign in once, Reflex gets the tools ──────────────────────────
 
-/** Provider id → what the owner calls it. Fountain's Google connection is Gmail today. */
+/**
+ * Every service Reflex means to offer, grouped the way the owner thinks about
+ * them. Which ones are live is decided against Fountain at request time: a
+ * service lights up when its provider is configured there and the scopes it
+ * needs are requested, and shows as "soon" until then — so this list is the
+ * roadmap and the live set at once, and nothing here needs touching when
+ * Fountain grows a provider.
+ */
+export interface CatalogService {
+  id: string;
+  label: string;
+  kind: "email" | "calendar" | "chat";
+  /** the Fountain connection provider that backs it */
+  provider: string;
+  /** a requested/granted scope must match, or null when any connection of the provider covers it */
+  scopeHint: RegExp | null;
+}
+
+export const SERVICE_CATALOG: CatalogService[] = [
+  { id: "gmail", label: "Gmail", kind: "email", provider: "google", scopeHint: /gmail|mail\.google/i },
+  { id: "outlook-mail", label: "Outlook", kind: "email", provider: "microsoft", scopeHint: /mail/i },
+  { id: "gcal", label: "Google Calendar", kind: "calendar", provider: "google", scopeHint: /calendar/i },
+  { id: "outlook-cal", label: "Outlook Calendar", kind: "calendar", provider: "microsoft", scopeHint: /calendar/i },
+  { id: "slack", label: "Slack", kind: "chat", provider: "slack", scopeHint: null },
+  { id: "teams", label: "Microsoft Teams", kind: "chat", provider: "microsoft", scopeHint: /chat|team/i },
+];
+
+export const SERVICE_KINDS: Array<{ kind: CatalogService["kind"]; title: string }> = [
+  { kind: "email", title: "Email" },
+  { kind: "calendar", title: "Calendar" },
+  { kind: "chat", title: "Chat" },
+];
+
+/** Provider id → what the owner calls it, for a provider the catalog does not know. */
 export function serviceLabel(provider: string): string {
-  if (provider === "google") return "Gmail";
+  if (provider === "google") return "Google";
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
