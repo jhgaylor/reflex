@@ -16,6 +16,8 @@ import {
   ValidationError,
   type Agent,
   type Block,
+  type Connection,
+  type ConnectionProvider,
   type LogEvent,
   type Teammate,
 } from "@agentshit/fountain-sdk";
@@ -284,6 +286,48 @@ export async function revokeContact(f: Fountain, agentId: string): Promise<void>
 
 function unwrap<T>(v: { data?: T } | T): T {
   return v && typeof v === "object" && "data" in (v as object) && (v as { data?: T }).data ? (v as { data: T }).data! : (v as T);
+}
+
+// ── services: sign in once, Reflex gets the tools ──────────────────────────
+
+/** Provider id → what the owner calls it. Fountain's Google connection is Gmail today. */
+export function serviceLabel(provider: string): string {
+  if (provider === "google") return "Gmail";
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+/** Provider id → the name Fountain serves its MCP tools under in `mcp_servers`. */
+function mcpName(provider: string): string {
+  return provider === "google" ? "gmail" : provider;
+}
+
+/**
+ * What this Fountain can connect and what this account has connected, or null
+ * when the account cannot have connections at all (broker off, older server).
+ */
+export async function services(f: Fountain): Promise<{ providers: ConnectionProvider[]; connections: Connection[] } | null> {
+  try {
+    const [providers, connections] = await Promise.all([f.connections.providers(), f.connections.list()]);
+    return { providers: providers.filter((p) => p.configured), connections };
+  } catch (err) {
+    if (err instanceof NotFoundError) return null;
+    throw err;
+  }
+}
+
+/** Point the agent's MCP servers at the active connections. No-op when nothing changed. */
+export async function syncServices(f: Fountain, agentId: string, connections: Connection[]): Promise<void> {
+  const desired: Record<string, { connection: string }> = {};
+  for (const c of connections) {
+    if (c.status !== "active") continue;
+    const name = mcpName(c.provider);
+    desired[name] ??= { connection: c.id };
+  }
+  const current = ((await f.agents.get(agentId)).mcp_servers ?? {}) as Record<string, unknown>;
+  const same =
+    Object.keys(current).length === Object.keys(desired).length &&
+    Object.entries(desired).every(([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v));
+  if (!same) await f.agents.update(agentId, { mcp_servers: desired });
 }
 
 // ── the vault: connected accounts ──────────────────────────────────────────

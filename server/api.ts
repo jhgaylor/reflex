@@ -7,7 +7,7 @@ import { Fountain } from "@agentshit/fountain-sdk";
 import type { ConnectionsView, JobView, Me, MemoryView, NotificationView, PlanView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, relayedPrompt, type Guardrails, type Profile } from "../shared/spec";
-import { busy, client, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, toRoutineView, toTurnView, translate, type Contact } from "./fountain";
+import { busy, client, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type Contact } from "./fountain";
 import { clearedCookie, newSessionToken, secureFor, sessionCookie, sessionToken } from "./session";
 import * as store from "./store";
 import type { Sql, User } from "./store";
@@ -108,7 +108,40 @@ export function buildApi(deps: ApiDeps): Handler {
       if (c) contact = { email: c.email, phone: c.phone, yourNumber: c.prompt_from_number ?? null, optedOut: Boolean(c.prompt_opted_out_at) };
     }
     const accounts = (await store.listAccounts(sql, u.id)).map((a) => ({ key: a.key, label: a.label, addedAt: a.addedAt.toISOString() }));
-    return { texting, contact, accounts };
+    return { texting, contact, services: await servicesView(u, f), accounts };
+  };
+
+  /**
+   * Sign-in providers Fountain holds credentials for. Connecting is a browser
+   * round trip through the Fountain console, so this is also where a new
+   * connection is noticed: every read reconciles the agent's tools with what
+   * is actually connected.
+   */
+  const servicesView = async (u: User, f: Fountain): Promise<ConnectionsView["services"]> => {
+    let s: Awaited<ReturnType<typeof services>>;
+    try {
+      s = await services(f);
+    } catch {
+      return { available: false, reason: "Could not check which services can be connected right now.", offered: [], connected: [] };
+    }
+    if (!s) return { available: false, reason: "Signing in to services is not available on this account yet.", offered: [], connected: [] };
+    if (u.agentId) await syncServices(f, u.agentId, s.connections).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    const connectUrl = (provider: string) => s!.providers.find((p) => p.provider === provider)?.connect_url ?? null;
+    return {
+      available: true,
+      reason: null,
+      offered: s.providers
+        .filter((p) => !s!.connections.some((c) => c.provider === p.provider && c.status === "active"))
+        .map((p) => ({ provider: p.provider, label: serviceLabel(p.provider), connectUrl: p.connect_url })),
+      connected: s.connections.map((c) => ({
+        id: c.id,
+        provider: c.provider,
+        label: serviceLabel(c.provider),
+        email: c.account_email,
+        revoked: c.status === "revoked",
+        connectUrl: c.status === "revoked" ? connectUrl(c.provider) : null,
+      })),
+    };
   };
 
   return async (req, url) => {
@@ -315,6 +348,11 @@ export function buildApi(deps: ApiDeps): Handler {
         }
         if (path === "/api/connections/texting" && req.method === "DELETE") {
           if (user.agentId) await revokeContact(f, user.agentId);
+          return json(await connections(user, f));
+        }
+        const sm = path.match(/^\/api\/connections\/services\/([^/]+)$/);
+        if (sm && req.method === "DELETE") {
+          await f.connections.delete(decodeURIComponent(sm[1]!));
           return json(await connections(user, f));
         }
         if (path === "/api/connections/accounts" && req.method === "POST") {

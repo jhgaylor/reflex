@@ -5,7 +5,7 @@
     "": {
       "name": "reflex",
       "dependencies": {
-        "@agentshit/fountain-sdk": "^1.6.0",
+        "@agentshit/fountain-sdk": "^1.11.1",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
       },
@@ -20,7 +20,7 @@
     },
   },
   "packages": {
-    "@agentshit/fountain-sdk": ["@agentshit/fountain-sdk@1.6.0", "", {}, "sha512-As8fY05AYyojAr+ZHGlzmQu5K7ALTqX1oinp58I8KzylFJlUAjowMc185eb3fjLUDdw9WW6+98KpEraFM3qzRw=="],
+    "@agentshit/fountain-sdk": ["@agentshit/fountain-sdk@1.11.1", "", {}, "sha512-6nDctk8BBT0SOSJF4j0dc9iRiQo7JRcKxYfkn7j4byq3uBRRXqINySqnsJwQGzkSvlEJiOcO7yRPWkmSQp4m4Q=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
