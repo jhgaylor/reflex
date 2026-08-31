@@ -94,8 +94,18 @@ export interface ConnectionsView {
   /** can this account have a phone number and inbox at all */
   texting: { available: boolean; reason: string | null };
   contact: { email: string | null; phone: string | null; yourNumber: string | null; optedOut: boolean } | null;
+  /** sign in once and Reflex gets the tools; Fountain holds the credential */
+  services: ServicesView;
   /** connected accounts: the keys the assistant can use, values never leave the server */
   accounts: Array<{ key: string; label: string; addedAt: string }>;
+}
+
+export interface ServicesView {
+  available: boolean;
+  reason: string | null;
+  /** what can be connected but is not yet, e.g. Gmail */
+  offered: Array<{ provider: string; label: string; connectUrl: string }>;
+  connected: Array<{ id: string; provider: string; label: string; email: string; revoked: boolean; connectUrl: string | null }>;
 }
 
 export interface PlanView {

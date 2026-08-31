@@ -88,6 +88,7 @@ export const api = {
   connections: () => call<ConnectionsView>("GET", "/api/connections"),
   enableTexting: (yourNumber: string) => call<ConnectionsView>("POST", "/api/connections/texting", { yourNumber }),
   disableTexting: () => call<ConnectionsView>("DELETE", "/api/connections/texting"),
+  disconnectService: (id: string) => call<ConnectionsView>("DELETE", `/api/connections/services/${encodeURIComponent(id)}`),
   addAccount: (a: { key: string; label: string; value: string }) => call<ConnectionsView>("POST", "/api/connections/accounts", a),
   removeAccount: (key: string) => call<ConnectionsView>("DELETE", `/api/connections/accounts/${encodeURIComponent(key)}`),
 

@@ -7,6 +7,10 @@ export function Connections({ say }: { say: (s: string) => void }) {
   const [view, setView] = useState<ConnectionsView | null>(null);
   useEffect(() => {
     api.connections().then(setView).catch((e: Error) => say(e.message));
+    // Connecting a service happens in another tab; catch up when the owner returns.
+    const refetch = () => api.connections().then(setView).catch(() => undefined);
+    window.addEventListener("focus", refetch);
+    return () => window.removeEventListener("focus", refetch);
   }, [say]);
   if (!view) return <p className="fineprint">Loading…</p>;
   return (
@@ -14,6 +18,7 @@ export function Connections({ say }: { say: (s: string) => void }) {
       <h2>Texting</h2>
       <TextingPanel view={view} onChange={setView} say={say} />
       <h2>Accounts Reflex may use</h2>
+      <ServicesPanel view={view} onChange={setView} say={say} />
       <AccountsPanel view={view} onChange={setView} say={say} />
     </div>
   );
@@ -87,6 +92,74 @@ export function TextingPanel({ view, onChange, say }: { view: ConnectionsView; o
         {busy ? "Setting up…" : "Turn on texting"}
       </button>
       <p className="fineprint">Only texts from this number are treated as instructions. Anyone else who texts it is ignored.</p>
+    </div>
+  );
+}
+
+/** Sign in once — Gmail today — and Reflex gets the tools without ever holding the password. */
+export function ServicesPanel({ view, onChange, say }: { view: ConnectionsView; onChange: (v: ConnectionsView) => void; say: (s: string) => void }) {
+  const s = view.services;
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!s.available && s.connected.length === 0) {
+    if (s.offered.length === 0 && !s.reason) return null;
+    return (
+      <div className="panel muted">
+        <p className="fineprint">{s.reason ?? "Signing in to services is not available on this account yet."}</p>
+      </div>
+    );
+  }
+  if (s.offered.length === 0 && s.connected.length === 0) return null;
+  return (
+    <div className="panel">
+      {s.connected.length > 0 && (
+        <ul className="accounts">
+          {s.connected.map((c) => {
+            const drop = (done: string) => {
+              setBusy(c.id);
+              api
+                .disconnectService(c.id)
+                .then((v) => {
+                  onChange(v);
+                  say(done);
+                })
+                .catch((e: Error) => say(e.message))
+                .finally(() => setBusy(null));
+            };
+            return (
+              <li key={c.id}>
+                <b>{c.label}</b> <span className="fineprint mono">{c.email}</span>
+                {c.revoked ? (
+                  <>
+                    <span className="error small">signed out</span>
+                    {c.connectUrl && (
+                      <a className="linkish" href={c.connectUrl} target="_blank" rel="noreferrer">
+                        connect again
+                      </a>
+                    )}
+                    <button className="linkish" disabled={busy === c.id} onClick={() => drop(`${c.label} is gone.`)}>
+                      remove
+                    </button>
+                  </>
+                ) : (
+                  <button className="linkish" disabled={busy === c.id} onClick={() => drop(`${c.label} is disconnected.`)}>
+                    disconnect
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {s.offered.length > 0 && (
+        <div className="chips">
+          {s.offered.map((p) => (
+            <a key={p.provider} className="ghost" href={p.connectUrl} target="_blank" rel="noreferrer">
+              Connect {p.label}
+            </a>
+          ))}
+        </div>
+      )}
+      <p className="fineprint">You sign in in a new tab; Reflex gets the tools, never your password. This page catches up when you come back.</p>
     </div>
   );
 }

@@ -8,7 +8,7 @@ import type { ConnectionsView, Me } from "../../shared/api";
 import { DEFAULT_GUARDRAILS, STARTER_JOBS, type Guardrails } from "../../shared/spec";
 import { api } from "../lib/api";
 import { GuardrailsForm } from "./GuardrailsForm";
-import { AccountsPanel, TextingPanel } from "./Connections";
+import { AccountsPanel, ServicesPanel, TextingPanel } from "./Connections";
 
 type Step = 0 | 1 | 2 | 3;
 
@@ -24,7 +24,12 @@ export function Setup(props: { me: Me; onDone: (m: Me) => void; onSignOut: () =>
   const [firstAsk, setFirstAsk] = useState("");
 
   useEffect(() => {
-    if (step >= 1) api.connections().then(setConnections).catch(() => undefined);
+    if (step < 1) return;
+    api.connections().then(setConnections).catch(() => undefined);
+    // Connecting a service happens in another tab; catch up when the owner returns.
+    const refetch = () => api.connections().then(setConnections).catch(() => undefined);
+    window.addEventListener("focus", refetch);
+    return () => window.removeEventListener("focus", refetch);
   }, [step]);
 
   const saveProfile = async () => {
@@ -120,10 +125,18 @@ export function Setup(props: { me: Me; onDone: (m: Me) => void; onSignOut: () =>
           <>
             <h2>What may it use?</h2>
             <p className="lede">
-              Give Reflex the accounts it will need: an email app password, a calendar link, a loyalty login. Anything you add is
-              stored where Reflex can use it but nobody, including Reflex's chat, can read it back.
+              Sign in to the services Reflex should use, or give it the accounts it will need: an email app password, a calendar
+              link, a loyalty login. Anything you add is stored where Reflex can use it but nobody, including Reflex's chat, can
+              read it back.
             </p>
-            {connections ? <AccountsPanel view={connections} onChange={setConnections} say={props.say} /> : <p className="fineprint">Checking…</p>}
+            {connections ? (
+              <>
+                <ServicesPanel view={connections} onChange={setConnections} say={props.say} />
+                <AccountsPanel view={connections} onChange={setConnections} say={props.say} />
+              </>
+            ) : (
+              <p className="fineprint">Checking…</p>
+            )}
             <div className="row">
               <button className="primary" onClick={() => setStep(3)}>
                 Continue
