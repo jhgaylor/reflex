@@ -103,9 +103,18 @@ export interface ConnectionsView {
 export interface ServicesView {
   available: boolean;
   reason: string | null;
-  /** what can be connected but is not yet, e.g. Gmail */
-  offered: Array<{ provider: string; label: string; connectUrl: string }>;
-  connected: Array<{ id: string; provider: string; label: string; email: string; revoked: boolean; connectUrl: string | null }>;
+  /** email, calendar, chat — every service Reflex means to offer, whatever its state today */
+  groups: Array<{ kind: string; title: string; services: ServiceView[] }>;
+}
+
+export interface ServiceView {
+  id: string;
+  label: string;
+  /** connected: signed in and working. offered: one click away. revoked: needs a fresh sign-in. soon: not on Fountain yet. */
+  state: "connected" | "offered" | "revoked" | "soon";
+  email: string | null;
+  connectionId: string | null;
+  connectUrl: string | null;
 }
 
 export interface PlanView {

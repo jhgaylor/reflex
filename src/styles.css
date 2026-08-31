@@ -188,6 +188,12 @@ textarea { resize: vertical; }
 .accounts { list-style: none; padding: 0; margin: 0 0 12px; }
 .accounts li { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
 .accounts li b { flex: 1; }
+.svc-group h3 { margin: 12px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.svc-group:first-child h3 { margin-top: 0; }
+.svc-group .accounts { margin-bottom: 4px; }
+.svc-group .accounts li:last-child { border-bottom: none; }
+.svc-group .ghost { padding: 5px 14px; font-size: 13px; }
+.soon { font-size: 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 999px; padding: 3px 10px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .chip { background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; color: var(--ink-2); }
 .chip:hover { border-color: var(--ink); color: var(--ink); }
