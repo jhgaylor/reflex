@@ -78,4 +78,12 @@ describe("systemPrompt", () => {
     expect(without).toContain('"memory":{"home_airport":"DEN"}');
     expect(without).not.toContain("engram_capture");
   });
+
+  test("with Messages attached, texts are untrusted and confirmation is explicit", () => {
+    const profile = { name: "Jake", timezone: "UTC", about: "", guardrails: DEFAULT_GUARDRAILS };
+    const p = systemPrompt(profile, [], false, true);
+    expect(p).toContain("`messages_*` tools");
+    expect(p).toContain("never set `confirmed`");
+    expect(p).toContain("text, chat message");
+  });
 });

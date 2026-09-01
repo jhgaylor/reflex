@@ -1,6 +1,6 @@
 /** Connections: how Reflex reaches you, and what it may use. Shared with the setup wizard. */
 import { useEffect, useState } from "react";
-import type { ConnectionsView } from "../../shared/api";
+import type { ConnectionsView, MessagePairingView } from "../../shared/api";
 import { api } from "../lib/api";
 
 export function Connections({ say }: { say: (s: string) => void }) {
@@ -18,8 +18,76 @@ export function Connections({ say }: { say: (s: string) => void }) {
       <h2>Texting</h2>
       <TextingPanel view={view} onChange={setView} say={say} />
       <h2>Accounts Reflex may use</h2>
+      <MessagesPanel view={view} onChange={setView} say={say} />
       <ServicesPanel view={view} onChange={setView} say={say} />
       <AccountsPanel view={view} onChange={setView} say={say} />
+    </div>
+  );
+}
+
+export function MessagesPanel({ view, onChange, say }: { view: ConnectionsView; onChange: (v: ConnectionsView) => void; say: (s: string) => void }) {
+  const [pairing, setPairing] = useState<MessagePairingView | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const every = pairing ? 3000 : view.messages.devices.length > 0 ? 30_000 : 0;
+    if (!every) return;
+    const timer = setInterval(() => api.connections().then(onChange).catch(() => undefined), every);
+    return () => clearInterval(timer);
+  }, [onChange, pairing, view.messages.devices.length]);
+
+  useEffect(() => {
+    if (view.messages.devices.length > 0) setPairing(null);
+  }, [view.messages.devices.length]);
+
+  const command = pairing ? `bun run messages:relay -- --server ${window.location.origin} --code ${pairing.code}` : "";
+  return (
+    <div className="panel">
+      <h3>Messages on your Mac</h3>
+      {view.messages.devices.length > 0 ? (
+        <ul className="accounts">
+          {view.messages.devices.map((d) => (
+            <li key={d.id}>
+              <b>{d.name}</b>
+              <span className={d.connected ? "small" : "fineprint small"}>{d.connected ? "connected" : d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString()}` : "waiting to connect"}</span>
+              <button
+                className="linkish"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  api.disconnectMessagesMac(d.id).then(onChange).catch((e: Error) => say(e.message)).finally(() => setBusy(false));
+                }}
+              >
+                disconnect
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : pairing ? (
+        <>
+          <p>On the Mac signed in to Messages, open this Reflex checkout and run:</p>
+          <pre className="pair-command"><code>{command}</code></pre>
+          <button className="ghost" onClick={() => navigator.clipboard.writeText(command).then(() => say("Pairing command copied.")).catch(() => say("Could not copy it; select the command instead."))}>
+            Copy command
+          </button>
+          <p className="fineprint">The code expires at {new Date(pairing.expiresAt).toLocaleTimeString()}. The first run saves the pairing; later, run <span className="mono">bun run messages:relay</span>.</p>
+        </>
+      ) : (
+        <>
+          <p>Pair an always-on Mac to let Reflex search your Messages and, with your approval, send plain-text replies as you.</p>
+          <button
+            className="ghost"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              api.pairMessagesMac().then(setPairing).catch((e: Error) => say(e.message)).finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "Creating code…" : "Pair a Mac"}
+          </button>
+        </>
+      )}
+      <p className="fineprint">The relay reads Messages locally. Reflex never receives your Apple password.</p>
     </div>
   );
 }

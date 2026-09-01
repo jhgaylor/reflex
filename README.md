@@ -24,6 +24,7 @@ translates every Fountain concept into the owner's vocabulary:
 | Notifications | same block, `notify` key |
 | Routines | `team.schedules` on the agent, prompts prefixed `[via routine]` |
 | Texting | the team-comms contact (`POST /api/team/:id/contact`), gated on the `team_comms` flag |
+| Personal Messages | a paired Mac relay; read-only `chat.db` queries and approval-gated Messages automation exposed to the agent through `/api/mcp/messages` |
 | Accounts | a per-person vault; values write-only, labels in Postgres |
 | Rules | guardrails compiled into the system prompt (`shared/spec.ts`) |
 
@@ -54,6 +55,35 @@ the production origin registered).
 
 `bun test` runs the protocol, watcher and crypto tests; the store tests run
 only with `TEST_DATABASE_URL` set (CI sets it).
+
+## Messages on a Mac (proof of concept)
+
+Reflex can search the owner's local Messages history and send plain-text
+replies through a paired Mac. The relay makes outbound HTTPS requests only;
+the Mac opens no listening port and Reflex never receives an Apple password.
+
+1. On the Mac, sign in to Messages. For carrier SMS/MMS/RCS, turn on Messages
+   in iCloud or iPhone **Settings → Apps → Messages → Text Message Forwarding**
+   for this Mac.
+2. Give the terminal that runs Bun Full Disk Access in **System Settings →
+   Privacy & Security → Full Disk Access**. Keep Messages open and the Mac
+   awake.
+3. Deploy/start this Reflex server with `REFLEX_PUBLIC_URL` set to its public
+   HTTPS origin. The normal startup migration creates the pairing tables.
+4. Open **Connections → Messages on your Mac → Pair a Mac**, then run the
+   command it shows from this checkout. The one-time code expires after ten
+   minutes.
+5. Leave `bun run messages:relay` running. On the first actual send, macOS asks
+   whether the process may control Messages; allow it.
+
+Try “show me my five most recent Messages conversations” first. Sending uses
+an existing conversation ID, and when “ask before sending” is on, Reflex must
+get approval for the exact recipient and text before the relay accepts it.
+
+The proof of concept reads ordinary `message.text` values. Rich attributed
+messages may appear as `[rich or empty message]`, attachments are metadata
+only, contacts are shown by the names stored on chats or their phone/email
+handles, and the relay must be restarted manually after a Mac reboot.
 
 ## Ship
 

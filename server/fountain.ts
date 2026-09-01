@@ -80,10 +80,10 @@ export async function hire(
   f: Fountain,
   userId: string,
   profile: Profile,
-  opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[]; memory?: MemoryAttachment | null },
+  opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[]; memory?: MemoryAttachment | null; messages?: MessagesAttachment | null },
 ): Promise<Hired> {
   const name = agentName(userId);
-  const system = systemPrompt(profile, opts.connected ?? [], Boolean(opts.memory));
+  const system = systemPrompt(profile, opts.connected ?? [], Boolean(opts.memory), Boolean(opts.messages));
   let agent = (await f.agents.list(name)).find((a) => a.name === name) ?? null;
   if (agent) {
     if (agent.system !== system) agent = await f.agents.update(agent.id, { system });
@@ -372,14 +372,20 @@ export interface MemoryAttachment {
   token: string;
 }
 
+/** How the paired-Mac MCP bridge is attached. */
+export interface MessagesAttachment {
+  url: string;
+  token: string;
+}
+
 /**
  * Point the agent at the active connections and its memory. No-op when
- * nothing changed. Three halves: only Google gets a bare `{connection}`
+ * nothing changed. Google gets a bare `{connection}`
  * `mcp_servers` entry (it resolves to Fountain's Gmail-served MCP server,
  * which refuses other providers — every other token is brokered into the
- * sandbox env automatically); memory rides as a plain remote MCP entry
- * Fountain passes through verbatim; and the system prompt tells the agent
- * which accounts and tools it holds, or it would never know they exist.
+ * sandbox env automatically). Messages and memory use Reflex-hosted MCP
+ * bridges, and the system prompt tells the agent which accounts and tools it
+ * holds, or it would never know they exist.
  */
 export async function syncServices(
   f: Fountain,
@@ -388,6 +394,7 @@ export async function syncServices(
   providers: ConnectionProvider[],
   connections: Connection[],
   memory: MemoryAttachment | null = null,
+  messages: MessagesAttachment | null = null,
 ): Promise<void> {
   const desired: Record<string, unknown> = {};
   for (const c of connections) {
@@ -395,7 +402,8 @@ export async function syncServices(
     desired.gmail ??= { connection: c.id };
   }
   if (memory) desired.memory = { type: "http", url: memory.url, headers: { Authorization: `Bearer ${memory.token}` } };
-  const system = systemPrompt(profile, connectedAccounts(providers, connections), Boolean(memory));
+  if (messages) desired.messages = { type: "http", url: messages.url, headers: { Authorization: `Bearer ${messages.token}` } };
+  const system = systemPrompt(profile, connectedAccounts(providers, connections), Boolean(memory), Boolean(messages));
   const agent = await f.agents.get(agentId);
   const current = (agent.mcp_servers ?? {}) as Record<string, unknown>;
   const same =

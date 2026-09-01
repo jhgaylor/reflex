@@ -15,7 +15,7 @@ describe.skipIf(!url)("store", () => {
   let sql: Sql;
   beforeAll(async () => {
     sql = connect(url!);
-    for (const t of ["cursors", "outbox", "accounts", "notifications", "memory", "jobs", "sessions", "users"]) {
+    for (const t of ["cursors", "outbox", "accounts", "message_devices", "message_pairings", "notifications", "memory", "jobs", "sessions", "users"]) {
       await sql(store.fixed(`drop table if exists ${t} cascade`));
     }
     await store.migrate(sql);
@@ -81,5 +81,21 @@ describe.skipIf(!url)("store", () => {
     expect(list.every((n) => !n.read)).toBe(true);
     await store.markNotificationsRead(sql, u.id);
     expect((await store.listNotifications(sql, u.id)).every((n) => n.read)).toBe(true);
+  });
+
+  test("a Messages pairing is one-use and device credentials are digest-only", async () => {
+    const u = await store.upsertUser(sql, SECRET, { email: "mac@example.com", fountainUrl: "https://f.example", apiKey: "k" });
+    const pairing = await store.createMessagePairing(sql, u.id);
+    const claimed = await store.claimMessagePairing(sql, pairing.code.toLowerCase(), "Desk Mac");
+    expect(claimed?.user.id).toBe(u.id);
+    expect(claimed?.device.name).toBe("Desk Mac");
+    expect(await store.claimMessagePairing(sql, pairing.code, "Other Mac")).toBeNull();
+    expect((await store.messageDeviceByToken(sql, claimed!.token))?.device.id).toBe(claimed?.device.id);
+    const rows = await sql`select token_digest from message_devices where id = ${claimed!.device.id}`;
+    expect(String(rows[0]!.token_digest)).not.toContain(claimed!.token);
+    await store.touchMessageDevice(sql, claimed!.device.id);
+    expect((await store.listMessageDevices(sql, u.id))[0]!.lastSeenAt).not.toBeNull();
+    await store.revokeMessageDevice(sql, u.id, claimed!.device.id);
+    expect(await store.messageDeviceByToken(sql, claimed!.token)).toBeNull();
   });
 });

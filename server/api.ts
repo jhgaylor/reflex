@@ -4,11 +4,12 @@
  * key, and translates both ways.
  */
 import { Fountain } from "@agentshit/fountain-sdk";
-import type { ConnectionsView, JobView, Me, MemoryEntryView, MemoryPage, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
+import type { ConnectionsView, JobView, Me, MemoryEntryView, MemoryPage, MessagePairingView, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, relayedPrompt, type Guardrails, type Profile } from "../shared/spec";
-import { busy, client, connectedAccounts, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact, type MemoryAttachment } from "./fountain";
+import { busy, client, connectedAccounts, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact, type MemoryAttachment, type MessagesAttachment } from "./fountain";
 import { MemoryUnavailable, OWNER_CATEGORIES, type Memory, type MemoryEntry } from "./memory";
+import type { MessagesBridge } from "./messages";
 import { clearedCookie, newSessionToken, secureFor, sessionCookie, sessionToken } from "./session";
 import * as store from "./store";
 import type { Sql, User } from "./store";
@@ -21,6 +22,8 @@ export interface ApiDeps {
   watchers: Watchers;
   /** null when the engram binary or identity is unavailable; memory then reports "not ready" */
   memory: Memory | null;
+  /** Paired-Mac command transport and MCP tool implementation. */
+  messages: MessagesBridge;
   /** where the agent's computer reaches the memory bridge; null disables attachment */
   publicUrl: string | null;
 }
@@ -31,7 +34,7 @@ const json = (data: unknown, status = 200, headers?: Record<string, string>) => 
 const fail = (e: ReflexError) => json({ error: e.code, message: e.message }, e.status);
 
 export function buildApi(deps: ApiDeps): Handler {
-  const { sql, secret, hub, watchers, memory, publicUrl } = deps;
+  const { sql, secret, hub, watchers, memory, messages, publicUrl } = deps;
 
   /**
    * The person's brain, provisioned, plus the bearer their agent presents to
@@ -48,6 +51,12 @@ export function buildApi(deps: ApiDeps): Handler {
       console.warn(`memory ${u.id}: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
+  };
+
+  const messagesAttachFor = async (u: User): Promise<MessagesAttachment | null> => {
+    if (!publicUrl || (await store.listMessageDevices(sql, u.id)).length === 0) return null;
+    const token = await store.messagesToken(sql, secret, u.id);
+    return token ? { url: `${publicUrl}/api/mcp/messages`, token } : null;
   };
 
   const clientFor = async (u: User): Promise<Fountain> => {
@@ -111,9 +120,9 @@ export function buildApi(deps: ApiDeps): Handler {
     // rewriting it.
     const s = await services(f).catch(() => null);
     const connected = s ? connectedAccounts(s.providers, s.connections) : [];
-    const attach = await attachFor(u);
-    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId, connected, memory: attach });
-    await syncServices(f, agent.id, u.profile, s?.providers ?? [], s?.connections ?? [], attach).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    const [attach, messagesAttach] = await Promise.all([attachFor(u), messagesAttachFor(u)]);
+    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId, connected, memory: attach, messages: messagesAttach });
+    await syncServices(f, agent.id, u.profile, s?.providers ?? [], s?.connections ?? [], attach, messagesAttach).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
     const changed = agent.id !== u.agentId || teammate.conversation.id !== u.conversationId || vaultId !== u.vaultId;
     const updated = changed ? await store.updateUser(sql, u.id, { agentId: agent.id, conversationId: teammate.conversation.id, vaultId }) : u;
     if (changed || !u.agentId) watchers.start(u.id);
@@ -137,7 +146,14 @@ export function buildApi(deps: ApiDeps): Handler {
       if (c) contact = { email: c.email, phone: c.phone, yourNumber: c.prompt_from_number ?? null, optedOut: Boolean(c.prompt_opted_out_at) };
     }
     const accounts = (await store.listAccounts(sql, u.id)).map((a) => ({ key: a.key, label: a.label, addedAt: a.addedAt.toISOString() }));
-    return { texting, contact, services: await servicesView(u, f), accounts };
+    const now = Date.now();
+    const messageDevices = (await store.listMessageDevices(sql, u.id)).map((d) => ({
+      id: d.id,
+      name: d.name,
+      connected: Boolean(d.lastSeenAt && now - d.lastSeenAt.getTime() < 60_000),
+      lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
+    }));
+    return { texting, contact, services: await servicesView(u, f), messages: { devices: messageDevices }, accounts };
   };
 
   /**
@@ -157,7 +173,10 @@ export function buildApi(deps: ApiDeps): Handler {
     }
     const providers = s?.providers ?? [];
     const conns = s?.connections ?? [];
-    if (s && u.agentId) await syncServices(f, u.agentId, u.profile, providers, conns, await attachFor(u)).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    if (u.agentId) {
+      const [memoryAttach, messagesAttach] = await Promise.all([attachFor(u), messagesAttachFor(u)]);
+      await syncServices(f, u.agentId, u.profile, providers, conns, memoryAttach, messagesAttach).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    }
 
     const covers = (scopes: string[], hint: RegExp | null) => hint === null || scopes.some((sc) => hint.test(sc));
     const toService = (c: CatalogService): ServiceView => {
@@ -228,6 +247,46 @@ export function buildApi(deps: ApiDeps): Handler {
         if (!(err instanceof MemoryUnavailable)) console.error(`mcp memory ${owner.id}:`, err);
         return json({ jsonrpc: "2.0", id: null, error: { code: -32000, message: reason } }, 500);
       }
+    }
+
+    // ── Messages MCP bridge (agent bearer, no browser cookie) ────────────
+    if (path === "/api/mcp/messages") {
+      if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
+      const auth = req.headers.get("authorization") ?? "";
+      const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+      const owner = bearer ? await store.userByMessagesToken(sql, bearer) : null;
+      if (!owner || (await store.listMessageDevices(sql, owner.id)).length === 0) return json({ error: "unauthorized", message: "No Messages connection answers to that token." }, 401);
+      const body = await req.json().catch(() => null);
+      const answer = await messages.handleMcp(owner.profile, owner.id, body);
+      return answer.body === null ? new Response(null, { status: answer.status }) : json(answer.body, answer.status);
+    }
+
+    // ── Paired Mac transport (device bearer, no browser cookie) ──────────
+    if (path === "/api/messages/relay/pair" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { code?: string; name?: string };
+      const claimed = b.code ? await store.claimMessagePairing(sql, b.code, (b.name ?? "Mac").trim() || "Mac") : null;
+      if (!claimed) return fail(new ReflexError(401, "pairing_invalid", "That pairing code is invalid or expired."));
+      try {
+        await ensureAssistant(claimed.user, await clientFor(claimed.user));
+      } catch (err) {
+        console.warn(`messages ${claimed.user.id}: paired, but tool sync failed (${translate(err).code})`);
+      }
+      return json({ token: claimed.token, deviceId: claimed.device.id }, 201);
+    }
+    if (path === "/api/messages/relay/poll" || path === "/api/messages/relay/result") {
+      if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
+      const auth = req.headers.get("authorization") ?? "";
+      const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+      const paired = bearer ? await store.messageDeviceByToken(sql, bearer) : null;
+      if (!paired) return fail(new ReflexError(401, "device_revoked", "This Mac is no longer paired."));
+      await store.touchMessageDevice(sql, paired.device.id);
+      if (path.endsWith("/poll")) {
+        const command = await messages.poll(paired.user.id, paired.device.id);
+        return command ? json(command) : new Response(null, { status: 204 });
+      }
+      const b = (await req.json().catch(() => ({}))) as { id?: string; result?: unknown; error?: string };
+      if (!b.id || !messages.complete(paired.user.id, b.id, b.result, b.error)) return fail(new ReflexError(404, "command_gone", "That command is no longer waiting."));
+      return new Response(null, { status: 204 });
     }
 
     // ── session ───────────────────────────────────────────────────────────
@@ -444,6 +503,19 @@ export function buildApi(deps: ApiDeps): Handler {
         }
         if (path === "/api/connections/texting" && req.method === "DELETE") {
           if (user.agentId) await revokeContact(f, user.agentId);
+          return json(await connections(user, f));
+        }
+        if (path === "/api/connections/messages/pair" && req.method === "POST") {
+          const pairing = await store.createMessagePairing(sql, user.id);
+          return json({ code: pairing.code, expiresAt: pairing.expiresAt.toISOString() } satisfies MessagePairingView, 201);
+        }
+        const mm = path.match(/^\/api\/connections\/messages\/([^/]+)$/);
+        if (mm && req.method === "DELETE") {
+          await store.revokeMessageDevice(sql, user.id, decodeURIComponent(mm[1]!));
+          if (user.agentId) {
+            const s = await services(f).catch(() => null);
+            await syncServices(f, user.agentId, user.profile, s?.providers ?? [], s?.connections ?? [], await attachFor(user), await messagesAttachFor(user));
+          }
           return json(await connections(user, f));
         }
         const sm = path.match(/^\/api\/connections\/services\/([^/]+)$/);

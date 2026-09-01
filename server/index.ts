@@ -6,6 +6,7 @@ import { buildApi } from "./api";
 import { loadConfig } from "./config";
 import { open as openDatabase, ready as databaseReady } from "./db";
 import { Memory } from "./memory";
+import { MessagesBridge } from "./messages";
 import * as store from "./store";
 import { Hub, Watchers } from "./watcher";
 
@@ -22,6 +23,7 @@ if (!config.secret) {
 
 const sql = await openDatabase(config.databaseUrl);
 const hub = new Hub();
+const messages = new MessagesBridge();
 // clientFor / sendQueued are wired by buildApi, which owns the key store.
 const watchers = new Watchers({ sql, hub, clientFor: async () => null, sendQueued: async () => undefined });
 
@@ -34,9 +36,9 @@ if (!(await memory.probe())) {
   memory = null;
   console.warn(`memory: disabled (engram binary "${config.engramBin}" is not answering)`);
 }
-if (!config.publicUrl) console.warn("memory: REFLEX_PUBLIC_URL is not set; agents will not get memory tools");
+if (!config.publicUrl) console.warn("REFLEX_PUBLIC_URL is not set; agents will not get memory or Messages tools");
 
-const api = buildApi({ sql, secret: config.secret, hub, watchers, memory, publicUrl: config.publicUrl });
+const api = buildApi({ sql, secret: config.secret, hub, watchers, memory, messages, publicUrl: config.publicUrl });
 await watchers.startAll();
 
 // Nightly consolidation: decay, promote, dedup, archive — what makes the

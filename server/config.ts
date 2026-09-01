@@ -8,9 +8,9 @@ export interface Config {
   port: number;
   distDir: string;
   /**
-   * Where the agent's computer reaches this Reflex from outside (the memory
-   * MCP endpoint). Unset means memory tools are not attached to the agent —
-   * a sandbox cannot reach a Reflex it has no public address for.
+   * Where the agent's computer reaches this Reflex from outside (its memory
+   * and Messages MCP endpoints). Unset means those tools are not attached — a
+   * sandbox cannot reach a Reflex it has no public address for.
    */
   publicUrl: string | null;
   /** The engram binary that serves each person's memory brain. */

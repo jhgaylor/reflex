@@ -14,5 +14,5 @@
     "allowImportingTsExtensions": true,
     "types": ["bun-types"]
   },
-  "include": ["server", "shared"]
+  "include": ["server", "shared", "relay"]
 }

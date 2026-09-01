@@ -112,8 +112,17 @@ export interface ConnectionsView {
   contact: { email: string | null; phone: string | null; yourNumber: string | null; optedOut: boolean } | null;
   /** sign in once and Reflex gets the tools; Fountain holds the credential */
   services: ServicesView;
+  /** Macs whose local Messages history the assistant may use. */
+  messages: {
+    devices: Array<{ id: string; name: string; connected: boolean; lastSeenAt: string | null }>;
+  };
   /** connected accounts: the keys the assistant can use, values never leave the server */
   accounts: Array<{ key: string; label: string; addedAt: string }>;
+}
+
+export interface MessagePairingView {
+  code: string;
+  expiresAt: string;
 }
 
 export interface ServicesView {
