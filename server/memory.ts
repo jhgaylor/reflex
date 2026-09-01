@@ -241,10 +241,13 @@ export class Memory {
       fixed(`do $$
         declare r text;
         begin
-          for r in select rolname from pg_roles where rolname like 'engram%' and not pg_has_role(current_user, rolname, 'member')
+          -- usage, not member: the ADMIN OPTION row a CREATEROLE creator gets
+          -- already counts as membership, and a bare GRANT against it is a
+          -- no-op notice — the explicit options are what confer privileges.
+          for r in select rolname from pg_roles where rolname like 'engram%' and not pg_has_role(current_user, rolname, 'usage')
           loop
             begin
-              execute format('grant %I to %I', r, current_user);
+              execute format('grant %I to %I with inherit true, set true', r, current_user);
             exception when others then null;
             end;
           end loop;
