@@ -76,9 +76,14 @@ export interface Hired {
 }
 
 /** Create the agent (or update its prompt) and make sure it is on the team. */
-export async function hire(f: Fountain, userId: string, profile: Profile, opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[] }): Promise<Hired> {
+export async function hire(
+  f: Fountain,
+  userId: string,
+  profile: Profile,
+  opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[]; memory?: MemoryAttachment | null },
+): Promise<Hired> {
   const name = agentName(userId);
-  const system = systemPrompt(profile, opts.connected ?? []);
+  const system = systemPrompt(profile, opts.connected ?? [], Boolean(opts.memory));
   let agent = (await f.agents.list(name)).find((a) => a.name === name) ?? null;
   if (agent) {
     if (agent.system !== system) agent = await f.agents.update(agent.id, { system });
@@ -361,21 +366,36 @@ export function connectedAccounts(providers: ConnectionProvider[], connections: 
     .sort((a, b) => a.envKey.localeCompare(b.envKey));
 }
 
+/** How the memory MCP server is attached: the bridge URL plus the person's bearer. */
+export interface MemoryAttachment {
+  url: string;
+  token: string;
+}
+
 /**
- * Point the agent at the active connections. No-op when nothing changed.
- * Two halves: only Google gets an `mcp_servers` entry (a bare `{connection}`
- * entry resolves to Fountain's Gmail-served MCP server, which refuses other
- * providers — every other token is brokered into the sandbox env
- * automatically), and the system prompt tells the agent which accounts it
- * holds and how to use each, or it would never know the env keys exist.
+ * Point the agent at the active connections and its memory. No-op when
+ * nothing changed. Three halves: only Google gets a bare `{connection}`
+ * `mcp_servers` entry (it resolves to Fountain's Gmail-served MCP server,
+ * which refuses other providers — every other token is brokered into the
+ * sandbox env automatically); memory rides as a plain remote MCP entry
+ * Fountain passes through verbatim; and the system prompt tells the agent
+ * which accounts and tools it holds, or it would never know they exist.
  */
-export async function syncServices(f: Fountain, agentId: string, profile: Profile, providers: ConnectionProvider[], connections: Connection[]): Promise<void> {
-  const desired: Record<string, { connection: string }> = {};
+export async function syncServices(
+  f: Fountain,
+  agentId: string,
+  profile: Profile,
+  providers: ConnectionProvider[],
+  connections: Connection[],
+  memory: MemoryAttachment | null = null,
+): Promise<void> {
+  const desired: Record<string, unknown> = {};
   for (const c of connections) {
     if (c.status !== "active" || c.provider !== "google") continue;
     desired.gmail ??= { connection: c.id };
   }
-  const system = systemPrompt(profile, connectedAccounts(providers, connections));
+  if (memory) desired.memory = { type: "http", url: memory.url, headers: { Authorization: `Bearer ${memory.token}` } };
+  const system = systemPrompt(profile, connectedAccounts(providers, connections), Boolean(memory));
   const agent = await f.agents.get(agentId);
   const current = (agent.mcp_servers ?? {}) as Record<string, unknown>;
   const same =

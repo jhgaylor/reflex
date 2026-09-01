@@ -7,7 +7,7 @@ import type {
   ConnectionsView,
   JobView,
   Me,
-  MemoryView,
+  MemoryPage,
   NotificationView,
   PlanView,
   ProfileView,
@@ -71,9 +71,9 @@ export const api = {
   jobs: () => call<JobView[]>("GET", "/api/jobs"),
   dropJob: (key: string) => call<JobView>("PATCH", `/api/jobs/${encodeURIComponent(key)}`, { status: "dropped" }),
 
-  memory: () => call<MemoryView[]>("GET", "/api/memory"),
-  setMemory: (key: string, value: string) => call<MemoryView>("PUT", `/api/memory/${encodeURIComponent(key)}`, { value }),
-  forget: (key: string) => call<void>("DELETE", `/api/memory/${encodeURIComponent(key)}`),
+  memory: (q?: string) => call<MemoryPage>("GET", `/api/memory${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  remember: (content: string, category: string) => call<void>("POST", "/api/memory", { content, category }),
+  forget: (id: string) => call<void>("DELETE", `/api/memory/${encodeURIComponent(id)}`),
 
   notifications: () => call<NotificationView[]>("GET", "/api/notifications"),
   markNotificationsRead: () => call<void>("POST", "/api/notifications/read"),

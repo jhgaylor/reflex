@@ -2,9 +2,13 @@
 # postgres:// URL the Deployment reads as DATABASE_URL).
 #
 # Reflex holds each person's Fountain key sealed, plus the things Fountain has
-# no table for: jobs, memory, notifications, connected-account labels, and
-# messages queued for a busy assistant. Single instance; Longhorn replicates
-# the volume.
+# no table for: jobs, notifications, connected-account labels, and messages
+# queued for a busy assistant. Memory lives beside it: one engram brain
+# database per person (`reflex_brain_<id>`), created by the app at runtime —
+# hence `createdb`/`createrole` on the app role (engram's migrations declare
+# its three NOLOGIN RBAC roles). The `standard` image flavor rather than
+# `minimal`, because engram needs pgvector. Single instance; Longhorn
+# replicates the volume.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -12,11 +16,21 @@ metadata:
   namespace: reflex
 spec:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.6-minimal-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6-standard-trixie
   bootstrap:
     initdb:
       database: reflex_app
       owner: reflex
+  managed:
+    roles:
+      # Neither passwordSecret nor disablePassword is set, so CNPG leaves the
+      # generated password alone and only reconciles the attributes.
+      - name: reflex
+        ensure: present
+        login: true
+        createdb: true
+        createrole: true
+        comment: reflex app; creates one engram brain database per person
   storage:
     storageClass: longhorn
     size: 5Gi

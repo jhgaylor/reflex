@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.local
 .DS_Store
+# built by CI (and by hand for local image builds); the .patch beside them is committed
+vendor/engram/engram-linux-*
+.engram-src/

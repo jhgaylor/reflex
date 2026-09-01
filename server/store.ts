@@ -9,6 +9,7 @@
 import type { JobStatus, NotifyKind } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, type Profile } from "../shared/spec";
 import type { SetupStep } from "../shared/api";
+import crypto from "node:crypto";
 import { open, seal } from "./secretbox";
 import { SESSION_TTL_SECONDS, tokenDigest } from "./session";
 
@@ -25,6 +26,8 @@ export interface User {
   vaultId: string | null;
   profile: Profile;
   setupStep: SetupStep;
+  /** when the person's memory brain was provisioned, or null before it exists */
+  memoryProvisionedAt: Date | null;
 }
 
 export interface JobRow {
@@ -98,6 +101,20 @@ const SCHEMA: string[] = [
      last_event_id bigint not null default 0
    )`,
   `create index if not exists notifications_user_idx on notifications (user_id, created_at desc)`,
+  // Memory brains (engram). The token is what the agent's computer presents to
+  // the memory MCP endpoint: sealed so a leaked table is not a set of brains,
+  // digest-indexed so a request can be resolved to its person.
+  `alter table users add column if not exists memory_token text`,
+  `alter table users add column if not exists memory_token_digest text`,
+  `alter table users add column if not exists memory_provisioned_at timestamptz`,
+  `create index if not exists users_memory_token_idx on users (memory_token_digest)`,
+  // The server's engram signing identity, sealed. Materialized to disk at
+  // boot so a restarted pod signs as the same identity it always did.
+  `create table if not exists engram_files (
+     path text primary key,
+     content text not null,
+     created_at timestamptz not null default now()
+   )`,
 ];
 
 /** A real template object for a fixed statement; the driver wants `raw`. */
@@ -129,6 +146,7 @@ function toUser(r: Record<string, unknown>): User {
       guardrails: { ...DEFAULT_GUARDRAILS, ...(p.guardrails ?? {}) },
     },
     setupStep: (r.setup_step as SetupStep) ?? "profile",
+    memoryProvisionedAt: r.memory_provisioned_at ? new Date(r.memory_provisioned_at as string) : null,
   };
 }
 
@@ -236,6 +254,57 @@ export async function setMemory(sql: Sql, userId: number, key: string, value: st
   await sql`
     insert into memory (user_id, key, value) values (${userId}, ${key}, ${value})
     on conflict (user_id, key) do update set value = excluded.value, updated_at = now()`;
+}
+
+// ── memory brains (engram) ─────────────────────────────────────────────────
+
+/** The person's memory bearer token, minting one on first ask. */
+export async function memoryToken(sql: Sql, secret: string, userId: number): Promise<string | null> {
+  const rows = await sql<{ memory_token: string | null }>`select memory_token from users where id = ${userId}`;
+  if (!rows[0]) return null;
+  const existing = open(rows[0].memory_token, secret);
+  if (existing) return existing;
+  const token = newMemoryToken();
+  await sql`update users set memory_token = ${seal(token, secret)}, memory_token_digest = ${tokenDigest(token)} where id = ${userId}`;
+  return token;
+}
+
+function newMemoryToken(): string {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+/** Resolve a memory MCP request's bearer token to its person. */
+export async function userByMemoryToken(sql: Sql, token: string): Promise<User | null> {
+  const rows = await sql`select * from users where memory_token_digest = ${tokenDigest(token)}`;
+  return rows[0] ? toUser(rows[0]) : null;
+}
+
+export async function markMemoryProvisioned(sql: Sql, userId: number): Promise<void> {
+  await sql`update users set memory_provisioned_at = now() where id = ${userId} and memory_provisioned_at is null`;
+}
+
+/**
+ * One person's engram keystore files, sealed at rest and keyed under a
+ * per-person prefix (`u<id>/identity.json`, …); the map's keys are the
+ * relative paths. Empty when none saved yet.
+ */
+export async function engramFiles(sql: Sql, secret: string, userId: number): Promise<Map<string, Buffer>> {
+  const rows = await sql<{ path: string; content: string }>`select path, content from engram_files where path like ${`u${userId}/%`}`;
+  const out = new Map<string, Buffer>();
+  const prefix = `u${userId}/`;
+  for (const r of rows) {
+    const b64 = open(r.content, secret);
+    if (b64 !== null) out.set(r.path.slice(prefix.length), Buffer.from(b64, "base64"));
+  }
+  return out;
+}
+
+export async function saveEngramFiles(sql: Sql, secret: string, userId: number, files: Map<string, Buffer>): Promise<void> {
+  for (const [path, content] of files) {
+    await sql`
+      insert into engram_files (path, content) values (${`u${userId}/${path}`}, ${seal(content.toString("base64"), secret)})
+      on conflict (path) do update set content = excluded.content`;
+  }
 }
 
 // ── notifications ──────────────────────────────────────────────────────────

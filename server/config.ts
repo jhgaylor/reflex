@@ -7,6 +7,16 @@ export interface Config {
   defaultFountain: string;
   port: number;
   distDir: string;
+  /**
+   * Where the agent's computer reaches this Reflex from outside (the memory
+   * MCP endpoint). Unset means memory tools are not attached to the agent —
+   * a sandbox cannot reach a Reflex it has no public address for.
+   */
+  publicUrl: string | null;
+  /** The engram binary that serves each person's memory brain. */
+  engramBin: string;
+  /** Where the engram signing identity is materialized on disk. */
+  engramHome: string;
 }
 
 export function loadConfig(env: Record<string, string | undefined>): Config {
@@ -17,5 +27,8 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     defaultFountain: (trim(env.FOUNTAIN_URL) ?? "https://fountain.inevitable.fyi").replace(/\/+$/, ""),
     port: Number(trim(env.PORT) ?? 8080) || 8080,
     distDir: trim(env.DIST_DIR) ?? "dist",
+    publicUrl: (trim(env.REFLEX_PUBLIC_URL) ?? null)?.replace(/\/+$/, "") ?? null,
+    engramBin: trim(env.ENGRAM_BIN) ?? "engram",
+    engramHome: trim(env.ENGRAM_HOME) ?? "/tmp/reflex-engram",
   };
 }

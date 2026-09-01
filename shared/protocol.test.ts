@@ -67,4 +67,15 @@ describe("systemPrompt", () => {
     expect(loose).toContain("You may spend money");
     expect(loose).toContain("has not told you about themselves");
   });
+
+  test("with memory attached, the tools replace the memory map", () => {
+    const profile = { name: "Jake", timezone: "UTC", about: "", guardrails: DEFAULT_GUARDRAILS };
+    const withMemory = systemPrompt(profile, [], true);
+    expect(withMemory).toContain("engram_capture");
+    expect(withMemory).not.toContain('"memory":{"home_airport"');
+    expect(withMemory).not.toContain("memory map");
+    const without = systemPrompt(profile, [], false);
+    expect(without).toContain('"memory":{"home_airport":"DEN"}');
+    expect(without).not.toContain("engram_capture");
+  });
 });

@@ -65,10 +65,26 @@ export interface JobView {
   updatedAt: string;
 }
 
-export interface MemoryView {
-  key: string;
-  value: string;
-  updatedAt: string;
+/** One remembered thing, as engram's visible views hand it back. */
+export interface MemoryEntryView {
+  /** null on rows the timeline view returns without one; those cannot be forgotten from the page */
+  id: string | null;
+  content: string;
+  category: string;
+  /** who wrote it: the assistant, the owner ("human"), or "import" for migrated facts */
+  source: string;
+  at: string | null;
+  tags: string[];
+  /** decays unless reinforced; null when the view does not report it */
+  strength: number | null;
+  tier: string | null;
+}
+
+export interface MemoryPage {
+  /** false while the brain is not provisioned or the backend is not answering */
+  ready: boolean;
+  reason: string | null;
+  entries: MemoryEntryView[];
 }
 
 export interface NotificationView {

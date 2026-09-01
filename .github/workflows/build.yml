@@ -19,6 +19,10 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/reflex
+  # The memory backend, built from source (engram publishes no release
+  # artifacts). Bump deliberately; the P-256 patch in vendor/engram/ can be
+  # dropped once that fix is merged upstream.
+  ENGRAM_REF: cf63b530a5fb492041ebfc4900a8caabdcd01942
 
 jobs:
   build:
@@ -54,6 +58,30 @@ jobs:
           bun install --frozen-lockfile
           bun test
           bun run build
+      # engram is a private repo, so this checkout needs ENGRAM_REPO_TOKEN
+      # (a fine-grained PAT with read access to engrambrain/engram) in the
+      # repository secrets. Cross-compiled here on the runner — same reason
+      # the SPA is: the docker stage stays QEMU-free.
+      - name: Check out engram (memory backend)
+        uses: actions/checkout@v7
+        with:
+          repository: engrambrain/engram
+          ref: ${{ env.ENGRAM_REF }}
+          token: ${{ secrets.ENGRAM_REPO_TOKEN }}
+          path: .engram-src
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: .engram-src/go.mod
+          cache-dependency-path: .engram-src/go.sum
+      - name: Build engram (linux amd64 + arm64, with the P-256 TLS patch)
+        run: |
+          cd .engram-src
+          git apply ../vendor/engram/0001-tls-p256-fallback.patch
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-X main.version=${ENGRAM_REF::7}+p256" \
+              -o ../vendor/engram/engram-linux-$arch ./cmd/engram
+          done
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4

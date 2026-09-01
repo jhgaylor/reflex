@@ -1,0 +1,58 @@
+From 470329c2610bd052143215adf3531dbc3a5ec823 Mon Sep 17 00:00:00 2001
+From: Jake Gaylor <jhgaylor@gmail.com>
+Date: Sun, 16 Aug 2026 02:05:08 -0400
+Subject: [PATCH] fix(db): offer P-256 as the last-resort TLS group so stock
+ PostgreSQL 17 servers can connect
+
+The pool restricted CurvePreferences to X25519MLKEM768 and X25519. PostgreSQL
+17 and earlier default ssl_ecdh_curve to prime256v1 alone, and managed
+offerings such as CloudNativePG pin that parameter, so every TLS connect to a
+stock server failed with 'tls: handshake failure' while psql (OpenSSL, offers
+P-256) connected fine. Append CurveP256 after the X25519 groups: order is the
+client preference and TLS 1.3 servers honour it, so a PQ-capable server still
+negotiates the hybrid, and logNegotiatedCurve already reports anything below
+X25519MLKEM768 as a downgrade event.
+
+Reproduced and verified against CloudNativePG 1.29 / PostgreSQL 17.6: before,
+init could apply the schema but keys publish and every write session failed;
+after, publish/capture/search/doctor succeed with negotiated_curve=P-256 logged.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ internal/db/pool.go | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/internal/db/pool.go b/internal/db/pool.go
+index de3847d..3d17ca4 100644
+--- a/internal/db/pool.go
++++ b/internal/db/pool.go
+@@ -162,14 +162,22 @@ func NewPool(ctx context.Context, cfg Config) (*Pool, error) {
+ 
+ 	p := &Pool{logger: logger}
+ 
+-	// PQ-TLS (DESIGN §2). Prefer X25519MLKEM768, fall back to X25519.
+-	// A downgrade to X25519 is an observability event, not an error.
+-	// If the resolved URL has no TLS (e.g. sslmode=disable for the local
+-	// default), TLSConfig is nil and we leave it alone.
++	// PQ-TLS (DESIGN §2). Prefer X25519MLKEM768, fall back to X25519, and
++	// keep P-256 as the last resort: PostgreSQL 17 and earlier default
++	// ssl_ecdh_curve to prime256v1 alone (and managed offerings such as
++	// CloudNativePG pin it), so a client offering only the X25519 groups
++	// cannot complete a handshake with a stock server at all ("tls:
++	// handshake failure" on every connect). Group ORDER is the client's
++	// preference and a TLS 1.3 server honours it, so a PQ-capable server
++	// still negotiates the hybrid; anything below X25519MLKEM768 is logged
++	// as a downgrade by logNegotiatedCurve. If the resolved URL has no TLS
++	// (e.g. sslmode=disable for the local default), TLSConfig is nil and
++	// we leave it alone.
+ 	if poolCfg.ConnConfig.TLSConfig != nil {
+ 		poolCfg.ConnConfig.TLSConfig.CurvePreferences = []tls.CurveID{
+ 			tls.X25519MLKEM768,
+ 			tls.X25519,
++			tls.CurveP256,
+ 		}
+ 	}
+ 
+-- 
+2.39.5 (Apple Git-154)
+

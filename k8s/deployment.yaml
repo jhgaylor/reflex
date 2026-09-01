@@ -39,6 +39,10 @@ spec:
                   key: uri
             - name: FOUNTAIN_URL
               value: https://fountain.inevitable.fyi
+            # Where the agent's computer reaches the memory MCP bridge.
+            # Unset would mean: no memory tools on any agent.
+            - name: REFLEX_PUBLIC_URL
+              value: https://reflex.inevitable.fyi
           readinessProbe:
             httpGet: { path: /readyz, port: 8080 }
             initialDelaySeconds: 2
@@ -48,5 +52,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 20
           resources:
-            requests: { cpu: 30m, memory: 160Mi }
-            limits: { memory: 400Mi }
+            # Headroom over the old 400Mi: each active brain runs a small
+            # engram child process behind the memory bridge.
+            requests: { cpu: 30m, memory: 200Mi }
+            limits: { memory: 600Mi }

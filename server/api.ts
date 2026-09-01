@@ -4,10 +4,11 @@
  * key, and translates both ways.
  */
 import { Fountain } from "@agentshit/fountain-sdk";
-import type { ConnectionsView, JobView, Me, MemoryView, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
+import type { ConnectionsView, JobView, Me, MemoryEntryView, MemoryPage, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, relayedPrompt, type Guardrails, type Profile } from "../shared/spec";
-import { busy, client, connectedAccounts, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact } from "./fountain";
+import { busy, client, connectedAccounts, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact, type MemoryAttachment } from "./fountain";
+import { MemoryUnavailable, OWNER_CATEGORIES, type Memory, type MemoryEntry } from "./memory";
 import { clearedCookie, newSessionToken, secureFor, sessionCookie, sessionToken } from "./session";
 import * as store from "./store";
 import type { Sql, User } from "./store";
@@ -18,6 +19,10 @@ export interface ApiDeps {
   secret: string;
   hub: Hub;
   watchers: Watchers;
+  /** null when the engram binary or identity is unavailable; memory then reports "not ready" */
+  memory: Memory | null;
+  /** where the agent's computer reaches the memory bridge; null disables attachment */
+  publicUrl: string | null;
 }
 
 type Handler = (req: Request, url: URL) => Promise<Response>;
@@ -26,7 +31,24 @@ const json = (data: unknown, status = 200, headers?: Record<string, string>) => 
 const fail = (e: ReflexError) => json({ error: e.code, message: e.message }, e.status);
 
 export function buildApi(deps: ApiDeps): Handler {
-  const { sql, secret, hub, watchers } = deps;
+  const { sql, secret, hub, watchers, memory, publicUrl } = deps;
+
+  /**
+   * The person's brain, provisioned, plus the bearer their agent presents to
+   * the bridge — or null when memory cannot be offered, in which case the
+   * agent simply is not told about memory tools.
+   */
+  const attachFor = async (u: User): Promise<MemoryAttachment | null> => {
+    if (!memory || !publicUrl) return null;
+    try {
+      await memory.ensureBrain(u);
+      const token = await store.memoryToken(sql, secret, u.id);
+      return token ? { url: `${publicUrl}/api/mcp/memory`, token } : null;
+    } catch (err) {
+      console.warn(`memory ${u.id}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  };
 
   const clientFor = async (u: User): Promise<Fountain> => {
     const key = await store.fountainKey(sql, secret, u.id);
@@ -81,14 +103,17 @@ export function buildApi(deps: ApiDeps): Handler {
     return u ? clientFor(u).catch(() => null) : null;
   };
 
-  /** Make sure the person has an assistant; (re)apply the prompt. */
+  /** Make sure the person has an assistant; (re)apply the prompt, tools and memory. */
   const ensureAssistant = async (u: User, f: Fountain): Promise<User> => {
     const vaultId = u.vaultId ?? (await ensureVault(f, String(u.id)));
-    // The prompt names the connected accounts, so hire and syncServices must
-    // build it from the same list or they take turns rewriting it.
+    // The prompt names the connected accounts and the memory tools, so hire
+    // and syncServices must build it from the same lists or they take turns
+    // rewriting it.
     const s = await services(f).catch(() => null);
     const connected = s ? connectedAccounts(s.providers, s.connections) : [];
-    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId, connected });
+    const attach = await attachFor(u);
+    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId, connected, memory: attach });
+    await syncServices(f, agent.id, u.profile, s?.providers ?? [], s?.connections ?? [], attach).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
     const changed = agent.id !== u.agentId || teammate.conversation.id !== u.conversationId || vaultId !== u.vaultId;
     const updated = changed ? await store.updateUser(sql, u.id, { agentId: agent.id, conversationId: teammate.conversation.id, vaultId }) : u;
     if (changed || !u.agentId) watchers.start(u.id);
@@ -132,7 +157,7 @@ export function buildApi(deps: ApiDeps): Handler {
     }
     const providers = s?.providers ?? [];
     const conns = s?.connections ?? [];
-    if (s && u.agentId) await syncServices(f, u.agentId, u.profile, providers, conns).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    if (s && u.agentId) await syncServices(f, u.agentId, u.profile, providers, conns, await attachFor(u)).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
 
     const covers = (scopes: string[], hint: RegExp | null) => hint === null || scopes.some((sc) => hint.test(sc));
     const toService = (c: CatalogService): ServiceView => {
@@ -184,6 +209,26 @@ export function buildApi(deps: ApiDeps): Handler {
   return async (req, url) => {
     const path = url.pathname;
     const secure = secureFor(req, url);
+
+    // ── the memory bridge (bearer-authed; no cookie — the caller is the
+    //    agent's computer, not a browser) ───────────────────────────────────
+    if (path === "/api/mcp/memory") {
+      if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
+      const auth = req.headers.get("authorization") ?? "";
+      const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+      const owner = bearer ? await store.userByMemoryToken(sql, bearer) : null;
+      if (!owner || !memory) return json({ error: "unauthorized", message: "No brain answers to that token." }, 401);
+      try {
+        await memory.ensureBrain(owner);
+        const body = await req.json().catch(() => null);
+        const answer = await memory.handleMcp(owner.id, body);
+        return answer.body === null ? new Response(null, { status: answer.status }) : json(answer.body, answer.status);
+      } catch (err) {
+        const reason = err instanceof MemoryUnavailable ? err.message : "memory backend error";
+        if (!(err instanceof MemoryUnavailable)) console.error(`mcp memory ${owner.id}:`, err);
+        return json({ jsonrpc: "2.0", id: null, error: { code: -32000, message: reason } }, 500);
+      }
+    }
 
     // ── session ───────────────────────────────────────────────────────────
     if (path === "/api/session" && req.method === "POST") {
@@ -312,20 +357,34 @@ export function buildApi(deps: ApiDeps): Handler {
         return json(jobView(row));
       }
 
-      // ── memory ────────────────────────────────────────────────────────
-      if (path === "/api/memory" && req.method === "GET") return json((await store.listMemory(sql, user.id)).map(memView));
-      const memM = path.match(/^\/api\/memory\/([^/]+)$/);
-      if (memM && (req.method === "PUT" || req.method === "DELETE")) {
-        const key = decodeURIComponent(memM[1]!).toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 60);
-        const value = req.method === "DELETE" ? "" : String(((await req.json()) as { value?: string }).value ?? "").slice(0, 500);
-        await store.setMemory(sql, user.id, key, value);
-        if (user.agentId) {
-          const f = await clientFor(user);
-          const note = value ? `For your memory: ${key.replace(/_/g, " ")} is "${value}". Update your notes; no reply needed beyond one line.` : `Forget "${key.replace(/_/g, " ")}" entirely, including from your notes on your computer. One line back.`;
-          await send(user, f, note).catch(() => undefined);
+      // ── memory: the person's brain, through engram's visible views ────
+      if (path === "/api/memory" && req.method === "GET") {
+        if (!memory || !publicUrl) return json(noMemory("Memory is not set up on this Reflex yet."));
+        try {
+          await memory.ensureBrain(user);
+          const q = (url.searchParams.get("q") ?? "").trim().slice(0, 200) || null;
+          const entries = (await memory.entries(user.id, q)).map(entryView);
+          return json({ ready: true, reason: null, entries } satisfies MemoryPage);
+        } catch (err) {
+          if (err instanceof MemoryUnavailable) return json(noMemory("Memory is not answering right now. Try again in a moment."));
+          throw err;
         }
-        if (req.method === "DELETE") return new Response(null, { status: 204 });
-        return json({ key, value, updatedAt: new Date().toISOString() } satisfies MemoryView);
+      }
+      if (path === "/api/memory" && req.method === "POST") {
+        if (!memory) return fail(new ReflexError(503, "no_memory", "Memory is not set up on this Reflex yet."));
+        const b = (await req.json()) as { content?: string; category?: string };
+        const content = (b.content ?? "").trim().slice(0, 2000);
+        if (!content) return fail(new ReflexError(422, "invalid", "Say what Reflex should remember."));
+        const category = OWNER_CATEGORIES.includes((b.category ?? "") as (typeof OWNER_CATEGORIES)[number]) ? b.category! : "context";
+        await memory.ensureBrain(user);
+        await memory.capture(user.id, content, category);
+        return new Response(null, { status: 204 });
+      }
+      const memM = path.match(/^\/api\/memory\/([^/]+)$/);
+      if (memM && req.method === "DELETE") {
+        if (!memory) return fail(new ReflexError(503, "no_memory", "Memory is not set up on this Reflex yet."));
+        await memory.archive(user.id, decodeURIComponent(memM[1]!).slice(0, 64), "the owner asked to forget this");
+        return new Response(null, { status: 204 });
       }
 
       // ── notifications ─────────────────────────────────────────────────
@@ -444,8 +503,11 @@ function stuck(turns: import("../shared/api").TurnView[]): boolean {
 function jobView(r: store.JobRow): JobView {
   return { key: r.key, title: r.title, status: r.status, note: r.note, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString() };
 }
-function memView(m: { key: string; value: string; updatedAt: Date }): MemoryView {
-  return { key: m.key, value: m.value, updatedAt: m.updatedAt.toISOString() };
+function entryView(e: MemoryEntry): MemoryEntryView {
+  return { id: e.id, content: e.content, category: e.category, source: e.source, at: e.at, tags: e.tags, strength: e.strength, tier: e.tier };
+}
+function noMemory(reason: string): MemoryPage {
+  return { ready: false, reason, entries: [] };
 }
 function noteView(n: store.NotificationRow): NotificationView {
   return { id: n.id, kind: n.kind, text: n.text, at: n.createdAt.toISOString(), read: n.read };

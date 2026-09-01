@@ -5,6 +5,8 @@
 import { buildApi } from "./api";
 import { loadConfig } from "./config";
 import { open as openDatabase, ready as databaseReady } from "./db";
+import { Memory } from "./memory";
+import * as store from "./store";
 import { Hub, Watchers } from "./watcher";
 
 const config = loadConfig(process.env);
@@ -22,8 +24,35 @@ const sql = await openDatabase(config.databaseUrl);
 const hub = new Hub();
 // clientFor / sendQueued are wired by buildApi, which owns the key store.
 const watchers = new Watchers({ sql, hub, clientFor: async () => null, sendQueued: async () => undefined });
-const api = buildApi({ sql, secret: config.secret, hub, watchers });
+
+// Memory: each person's engram brain, behind the MCP bridge. A missing
+// binary disables memory (the page says so) without taking the rest of
+// Reflex down with it.
+let memory: Memory | null = new Memory(sql, config.secret, config);
+if (!(await memory.probe())) {
+  memory.close();
+  memory = null;
+  console.warn(`memory: disabled (engram binary "${config.engramBin}" is not answering)`);
+}
+if (!config.publicUrl) console.warn("memory: REFLEX_PUBLIC_URL is not set; agents will not get memory tools");
+
+const api = buildApi({ sql, secret: config.secret, hub, watchers, memory, publicUrl: config.publicUrl });
 await watchers.startAll();
+
+// Nightly consolidation: decay, promote, dedup, archive — what makes the
+// memory a memory rather than a log.
+if (memory) {
+  const m = memory;
+  setInterval(
+    () => {
+      void (async () => {
+        const users = await store.usersWithAssistant(sql);
+        await m.consolidateAll(users.filter((u) => u.memoryProvisionedAt).map((u) => u.id));
+      })().catch((err) => console.warn(`memory: consolidation sweep failed: ${err instanceof Error ? err.message : String(err)}`));
+    },
+    24 * 60 * 60 * 1000,
+  );
+}
 
 const server = Bun.serve({
   port: config.port,
