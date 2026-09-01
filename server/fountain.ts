@@ -23,7 +23,7 @@ import {
 } from "@agentshit/fountain-sdk";
 import type { AssistantView, RoutineView, TurnView } from "../shared/api";
 import { stripUpdate } from "../shared/protocol";
-import { AGENT_RUNTIME, DEFAULT_MODEL, agentName, systemPrompt, type Profile } from "../shared/spec";
+import { AGENT_RUNTIME, DEFAULT_MODEL, agentName, systemPrompt, type ConnectedAccount, type Profile } from "../shared/spec";
 
 export type { Teammate, LogEvent, Block };
 
@@ -76,9 +76,9 @@ export interface Hired {
 }
 
 /** Create the agent (or update its prompt) and make sure it is on the team. */
-export async function hire(f: Fountain, userId: string, profile: Profile, opts: { vaultId?: string | null; environmentId?: string | null }): Promise<Hired> {
+export async function hire(f: Fountain, userId: string, profile: Profile, opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[] }): Promise<Hired> {
   const name = agentName(userId);
-  const system = systemPrompt(profile);
+  const system = systemPrompt(profile, opts.connected ?? []);
   let agent = (await f.agents.list(name)).find((a) => a.name === name) ?? null;
   if (agent) {
     if (agent.system !== system) agent = await f.agents.update(agent.id, { system });
@@ -344,24 +344,47 @@ export async function services(f: Fountain): Promise<{ providers: ConnectionProv
   }
 }
 
+/** The active connections in the shape the system prompt describes them. */
+export function connectedAccounts(providers: ConnectionProvider[], connections: Connection[]): ConnectedAccount[] {
+  return connections
+    .filter((c) => c.status === "active")
+    .map((c) => {
+      const p = providers.find((x) => x.slug === c.provider);
+      return {
+        provider: c.provider,
+        label: p?.name ?? serviceLabel(c.provider),
+        account: c.account_email ?? null,
+        envKey: c.env_key,
+        hosts: p?.token_hosts ?? [],
+      };
+    })
+    .sort((a, b) => a.envKey.localeCompare(b.envKey));
+}
+
 /**
- * Point the agent's MCP servers at the active connections. No-op when nothing
- * changed. Only Google gets an entry: a bare `{connection}` entry resolves to
- * Fountain's Gmail-served MCP server, which refuses other providers. Every
- * other connection's token is brokered into the sandbox env automatically
- * (`MICROSOFT_ACCESS_TOKEN`, `SLACK_ACCESS_TOKEN`, …), no entry needed.
+ * Point the agent at the active connections. No-op when nothing changed.
+ * Two halves: only Google gets an `mcp_servers` entry (a bare `{connection}`
+ * entry resolves to Fountain's Gmail-served MCP server, which refuses other
+ * providers — every other token is brokered into the sandbox env
+ * automatically), and the system prompt tells the agent which accounts it
+ * holds and how to use each, or it would never know the env keys exist.
  */
-export async function syncServices(f: Fountain, agentId: string, connections: Connection[]): Promise<void> {
+export async function syncServices(f: Fountain, agentId: string, profile: Profile, providers: ConnectionProvider[], connections: Connection[]): Promise<void> {
   const desired: Record<string, { connection: string }> = {};
   for (const c of connections) {
     if (c.status !== "active" || c.provider !== "google") continue;
     desired.gmail ??= { connection: c.id };
   }
-  const current = ((await f.agents.get(agentId)).mcp_servers ?? {}) as Record<string, unknown>;
+  const system = systemPrompt(profile, connectedAccounts(providers, connections));
+  const agent = await f.agents.get(agentId);
+  const current = (agent.mcp_servers ?? {}) as Record<string, unknown>;
   const same =
     Object.keys(current).length === Object.keys(desired).length &&
     Object.entries(desired).every(([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v));
-  if (!same) await f.agents.update(agentId, { mcp_servers: desired });
+  const patch: { mcp_servers?: typeof desired; system?: string } = {};
+  if (!same) patch.mcp_servers = desired;
+  if (agent.system !== system) patch.system = system;
+  if (Object.keys(patch).length > 0) await f.agents.update(agentId, patch);
 }
 
 // ── the vault: connected accounts ──────────────────────────────────────────

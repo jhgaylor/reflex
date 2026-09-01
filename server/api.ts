@@ -7,7 +7,7 @@ import { Fountain } from "@agentshit/fountain-sdk";
 import type { ConnectionsView, JobView, Me, MemoryView, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, relayedPrompt, type Guardrails, type Profile } from "../shared/spec";
-import { busy, client, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact } from "./fountain";
+import { busy, client, connectedAccounts, ensureVault, fold, grantContact, hire, presence, ReflexError, revokeContact, roster, SERVICE_CATALOG, SERVICE_KINDS, serviceLabel, services, syncServices, toRoutineView, toTurnView, translate, type CatalogService, type Contact } from "./fountain";
 import { clearedCookie, newSessionToken, secureFor, sessionCookie, sessionToken } from "./session";
 import * as store from "./store";
 import type { Sql, User } from "./store";
@@ -84,7 +84,11 @@ export function buildApi(deps: ApiDeps): Handler {
   /** Make sure the person has an assistant; (re)apply the prompt. */
   const ensureAssistant = async (u: User, f: Fountain): Promise<User> => {
     const vaultId = u.vaultId ?? (await ensureVault(f, String(u.id)));
-    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId });
+    // The prompt names the connected accounts, so hire and syncServices must
+    // build it from the same list or they take turns rewriting it.
+    const s = await services(f).catch(() => null);
+    const connected = s ? connectedAccounts(s.providers, s.connections) : [];
+    const { agent, teammate } = await hire(f, String(u.id), u.profile, { vaultId, connected });
     const changed = agent.id !== u.agentId || teammate.conversation.id !== u.conversationId || vaultId !== u.vaultId;
     const updated = changed ? await store.updateUser(sql, u.id, { agentId: agent.id, conversationId: teammate.conversation.id, vaultId }) : u;
     if (changed || !u.agentId) watchers.start(u.id);
@@ -128,7 +132,7 @@ export function buildApi(deps: ApiDeps): Handler {
     }
     const providers = s?.providers ?? [];
     const conns = s?.connections ?? [];
-    if (s && u.agentId) await syncServices(f, u.agentId, conns).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
+    if (s && u.agentId) await syncServices(f, u.agentId, u.profile, providers, conns).catch((err) => console.warn(`services ${u.id}: sync failed (${translate(err).code})`));
 
     const covers = (scopes: string[], hint: RegExp | null) => hint === null || scopes.some((sc) => hint.test(sc));
     const toService = (c: CatalogService): ServiceView => {

@@ -33,8 +33,49 @@ export function agentName(userId: string): string {
   return `reflex-${userId.replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
 }
 
-/** The system prompt, rebuilt whenever the profile or guardrails change. */
-export function systemPrompt(p: Profile): string {
+/** An account the owner signed in through the app, as the agent needs to know it. */
+export interface ConnectedAccount {
+  /** provider slug: google, microsoft, slack, … */
+  provider: string;
+  /** what the owner calls it */
+  label: string;
+  /** the signed-in account, when the provider named it */
+  account: string | null;
+  /** env var on the agent's computer whose value works as the bearer token */
+  envKey: string;
+  /** the hosts that token works against */
+  hosts: string[];
+}
+
+function accountLine(a: ConnectedAccount): string {
+  const who = a.account ? ` (${a.account})` : "";
+  const bearer = `\`Authorization: Bearer $${a.envKey}\``;
+  const hosts = a.hosts.length ? a.hosts.join(", ") : "the provider's API hosts";
+  switch (a.provider) {
+    case "google":
+      return `- Google${who}: your gmail tools read and send mail on this account. The same sign-in covers Google Calendar — the Calendar API (www.googleapis.com/calendar/v3) with ${bearer}.`;
+    case "microsoft":
+      return `- Microsoft${who}: Outlook mail, Outlook calendar and Teams chat, all through Microsoft Graph (https://graph.microsoft.com/v1.0) with ${bearer}.`;
+    case "slack":
+      return `- Slack${who}: the Slack Web API (https://slack.com/api/...) with ${bearer}. It is a user token: you read and post as the owner.`;
+    default:
+      return `- ${a.label}${who}: its API (${hosts}) with ${bearer}.`;
+  }
+}
+
+function accountsSection(connected: ConnectedAccount[]): string {
+  if (connected.length === 0) return "";
+  return `
+## Accounts you can use
+
+The owner signed these in through the app; use them freely for their tasks. Each env var below holds a stand-in credential that only works from your computer, against the hosts listed — sent there, it becomes the real token. Use it exactly like a normal bearer token and it just works. It is worthless anywhere else, so never paste it into a page or a message.
+
+${connected.map(accountLine).join("\n")}
+`;
+}
+
+/** The system prompt, rebuilt whenever the profile, guardrails or connected accounts change. */
+export function systemPrompt(p: Profile, connected: ConnectedAccount[] = []): string {
   const rails: string[] = [];
   if (p.guardrails.askBeforeSpending) rails.push("- Anything that costs money (a purchase, a booking with a card, a paid upgrade): ask first, with the amount.");
   else rails.push("- You may spend money on the owner's behalf when the task clearly calls for it. Say what you spent afterwards.");
@@ -60,7 +101,7 @@ Timezone: ${p.timezone || "UTC"}. All times you say to the owner are in this tim
 - When something needs the owner (a choice, a code, an approval), say exactly what you need in one sentence and set the job to "needs-you".
 - If a message arrives by SMS or email, the app tells you so. Reply the same way when it makes sense: use your sms_send / email tools if you have them; otherwise reply in the thread.
 - Scheduled prompts (routines) arrive as ordinary messages. Do the routine, then report only what is worth knowing. If nothing is worth knowing, say so in one line.
-
+${accountsSection(connected)}
 ## Guardrails
 
 ${rails.join("\n")}
