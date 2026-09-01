@@ -21,6 +21,13 @@ spec:
     initdb:
       database: reflex_app
       owner: reflex
+      # pgvector is not a trusted extension, so the reflex role cannot CREATE
+      # EXTENSION it in the brain databases it creates. Installed into
+      # template1 instead: every CREATE DATABASE clones it, vector included.
+      # Bootstrap runs only at cluster creation — on the live cluster this was
+      # applied once by hand as the postgres superuser (2026-09-01).
+      postInitTemplateSQL:
+        - create extension if not exists vector
   managed:
     roles:
       # Neither passwordSecret nor disablePassword is set, so CNPG leaves the

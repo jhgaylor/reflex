@@ -161,14 +161,16 @@ export class Memory {
       if (!/already exists/i.test(err instanceof Error ? err.message : String(err))) throw err;
     }
     const brainUrl = this.brainUrl(user.id);
-    // pgvector is trusted, so the database owner can install it; engram's
-    // baseline expects the type to exist.
+    // pgvector is not trusted, so this succeeds only where the extension is
+    // already in template1 (k8s/postgres.yaml postInitTemplateSQL) or the
+    // role is superuser; either way engram's baseline needs the type.
     const brain = connect(brainUrl);
     try {
       await brain(fixed("create extension if not exists vector"));
     } catch (err) {
       console.warn(`memory ${user.id}: create extension vector: ${err instanceof Error ? err.message : String(err)}`);
     }
+    await this.joinEngramRoles(brain).catch(() => undefined);
 
     // The signing identity, first. A headless host has no OS keyring, and
     // engram's keystore hard-fails on a keyring *transport* error unless the
@@ -190,7 +192,15 @@ export class Memory {
 
     // Schema, migrations, and the publish that stamps the sidecar's user id —
     // the sealed keystore is saved only after, so a restored pod signs writes.
-    const init = await this.run(["init", "--db-url", brainUrl], user.id);
+    let init = await this.run(["init", "--db-url", brainUrl], user.id);
+    if (init.code !== 0) {
+      // On a brand-new cluster the baseline creates the engram roles mid-init
+      // and migration 008's DROP OWNED immediately needs membership in them —
+      // which CREATEROLE does not confer. Join the roles that now exist and
+      // resume; engram tracks applied migrations, so this picks up at 008.
+      await this.joinEngramRoles(brain).catch(() => undefined);
+      init = await this.run(["init", "--db-url", brainUrl], user.id);
+    }
     if (init.code !== 0) throw new MemoryUnavailable(`engram init failed: ${init.err.slice(0, 400)}`);
     await this.sealKeystore(user.id, recovery);
 
@@ -217,6 +227,29 @@ export class Memory {
     for (const m of legacy) await setMemory(this.sql, user.id, m.key, "");
     await markMemoryProvisioned(this.sql, user.id);
     console.log(`memory ${user.id}: brain provisioned${legacy.length ? ` (${legacy.length} facts imported)` : ""}`);
+  }
+
+  /**
+   * Membership in the engram roles, granted to ourselves. engram's migration
+   * 008 runs `DROP OWNED BY engram_reader/writer`, which requires membership;
+   * on Postgres 16+ CREATEROLE gives their creator only ADMIN OPTION — enough
+   * to grant membership, not to hold it. Engram assumes superuser here; we
+   * are not one, so we join instead. Idempotent, cluster-wide, best-effort.
+   */
+  private async joinEngramRoles(brain: Sql): Promise<void> {
+    await brain(
+      fixed(`do $$
+        declare r text;
+        begin
+          for r in select rolname from pg_roles where rolname like 'engram%' and not pg_has_role(current_user, rolname, 'member')
+          loop
+            begin
+              execute format('grant %I to %I', r, current_user);
+            exception when others then null;
+            end;
+          end loop;
+        end $$`),
+    );
   }
 
   /** Nightly upkeep: decay, promote, dedup, archive — engram's consolidation. */
