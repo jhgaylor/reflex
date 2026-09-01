@@ -132,7 +132,7 @@ export function buildApi(deps: ApiDeps): Handler {
 
     const covers = (scopes: string[], hint: RegExp | null) => hint === null || scopes.some((sc) => hint.test(sc));
     const toService = (c: CatalogService): ServiceView => {
-      const p = providers.find((x) => x.provider === c.provider);
+      const p = providers.find((x) => x.slug === c.provider);
       const conn =
         conns.find((x) => x.provider === c.provider && x.status === "active" && covers(x.scopes, c.scopeHint)) ??
         conns.find((x) => x.provider === c.provider && covers(x.scopes, c.scopeHint));
@@ -160,16 +160,16 @@ export function buildApi(deps: ApiDeps): Handler {
       .filter((c) => !claimed.has(c.id))
       .map((c) => ({
         id: `conn-${c.id}`,
-        label: serviceLabel(c.provider),
+        label: providers.find((p) => p.slug === c.provider)?.name ?? serviceLabel(c.provider),
         state: c.status === "active" ? "connected" : "revoked",
         email: c.account_email,
         connectionId: c.id,
-        connectUrl: c.status === "revoked" ? (providers.find((p) => p.provider === c.provider)?.connect_url ?? null) : null,
+        connectUrl: c.status !== "active" ? (providers.find((p) => p.slug === c.provider)?.connect_url ?? null) : null,
       }));
     for (const p of providers) {
-      const known = SERVICE_CATALOG.some((c) => c.provider === p.provider && covers(p.scopes, c.scopeHint));
-      if (!known && !conns.some((c) => c.provider === p.provider)) {
-        other.push({ id: `prov-${p.provider}`, label: serviceLabel(p.provider), state: "offered", email: null, connectionId: null, connectUrl: p.connect_url });
+      const known = SERVICE_CATALOG.some((c) => c.provider === p.slug && covers(p.scopes, c.scopeHint));
+      if (!known && !conns.some((c) => c.provider === p.slug)) {
+        other.push({ id: `prov-${p.slug}`, label: p.name || serviceLabel(p.slug), state: "offered", email: null, connectionId: null, connectUrl: p.connect_url });
       }
     }
     if (other.length > 0) groups.push({ kind: "other", title: "Also available", services: other });

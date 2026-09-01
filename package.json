@@ -13,7 +13,7 @@
     "server": "bun --watch server/index.ts"
   },
   "dependencies": {
-    "@agentshit/fountain-sdk": "^1.11.1",
+    "@agentshit/fountain-sdk": "^1.13.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

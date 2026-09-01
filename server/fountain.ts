@@ -329,10 +329,6 @@ export function serviceLabel(provider: string): string {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
-/** Provider id → the name Fountain serves its MCP tools under in `mcp_servers`. */
-function mcpName(provider: string): string {
-  return provider === "google" ? "gmail" : provider;
-}
 
 /**
  * What this Fountain can connect and what this account has connected, or null
@@ -340,7 +336,7 @@ function mcpName(provider: string): string {
  */
 export async function services(f: Fountain): Promise<{ providers: ConnectionProvider[]; connections: Connection[] } | null> {
   try {
-    const [providers, connections] = await Promise.all([f.connections.providers(), f.connections.list()]);
+    const [providers, connections] = await Promise.all([f.connections.providers.list(), f.connections.list()]);
     return { providers: providers.filter((p) => p.configured), connections };
   } catch (err) {
     if (err instanceof NotFoundError) return null;
@@ -348,13 +344,18 @@ export async function services(f: Fountain): Promise<{ providers: ConnectionProv
   }
 }
 
-/** Point the agent's MCP servers at the active connections. No-op when nothing changed. */
+/**
+ * Point the agent's MCP servers at the active connections. No-op when nothing
+ * changed. Only Google gets an entry: a bare `{connection}` entry resolves to
+ * Fountain's Gmail-served MCP server, which refuses other providers. Every
+ * other connection's token is brokered into the sandbox env automatically
+ * (`MICROSOFT_ACCESS_TOKEN`, `SLACK_ACCESS_TOKEN`, …), no entry needed.
+ */
 export async function syncServices(f: Fountain, agentId: string, connections: Connection[]): Promise<void> {
   const desired: Record<string, { connection: string }> = {};
   for (const c of connections) {
-    if (c.status !== "active") continue;
-    const name = mcpName(c.provider);
-    desired[name] ??= { connection: c.id };
+    if (c.status !== "active" || c.provider !== "google") continue;
+    desired.gmail ??= { connection: c.id };
   }
   const current = ((await f.agents.get(agentId)).mcp_servers ?? {}) as Record<string, unknown>;
   const same =
