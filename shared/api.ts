@@ -3,7 +3,7 @@
  * browser sees comes through here, in the owner's vocabulary: no agents,
  * sandboxes, schedules or vaults. The server translates to Fountain.
  */
-import type { Guardrails } from "./spec";
+import type { Guardrails, RelayKind } from "./spec";
 import type { JobStatus, NotifyKind } from "./protocol";
 
 export type SetupStep = "profile" | "reach" | "accounts" | "done";
@@ -112,12 +112,18 @@ export interface ConnectionsView {
   contact: { email: string | null; phone: string | null; yourNumber: string | null; optedOut: boolean } | null;
   /** sign in once and Reflex gets the tools; Fountain holds the credential */
   services: ServicesView;
-  /** Macs whose local Messages history the assistant may use. */
-  messages: {
-    devices: Array<{ id: string; name: string; connected: boolean; lastSeenAt: string | null }>;
-  };
+  /** Relays the owner runs (a Mac for Messages, a signal-cli host) whose chats the assistant may use. */
+  relays: RelayDeviceView[];
   /** connected accounts: the keys the assistant can use, values never leave the server */
   accounts: Array<{ key: string; label: string; addedAt: string }>;
+}
+
+export interface RelayDeviceView {
+  id: string;
+  kind: RelayKind;
+  name: string;
+  connected: boolean;
+  lastSeenAt: string | null;
 }
 
 export interface MessagePairingView {

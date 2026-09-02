@@ -16,7 +16,7 @@ import type {
   StreamEvent,
   ThreadView,
 } from "../../shared/api";
-import type { Guardrails } from "../../shared/spec";
+import type { Guardrails, RelayKind } from "../../shared/spec";
 
 export class ApiError extends Error {
   constructor(
@@ -89,8 +89,8 @@ export const api = {
   connections: () => call<ConnectionsView>("GET", "/api/connections"),
   enableTexting: (yourNumber: string) => call<ConnectionsView>("POST", "/api/connections/texting", { yourNumber }),
   disableTexting: () => call<ConnectionsView>("DELETE", "/api/connections/texting"),
-  pairMessagesMac: () => call<MessagePairingView>("POST", "/api/connections/messages/pair"),
-  disconnectMessagesMac: (id: string) => call<ConnectionsView>("DELETE", `/api/connections/messages/${encodeURIComponent(id)}`),
+  pairRelay: (kind: RelayKind) => call<MessagePairingView>("POST", `/api/connections/relays/${kind}/pair`),
+  disconnectRelay: (id: string) => call<ConnectionsView>("DELETE", `/api/connections/relays/${encodeURIComponent(id)}`),
   disconnectService: (id: string) => call<ConnectionsView>("DELETE", `/api/connections/services/${encodeURIComponent(id)}`),
   addAccount: (a: { key: string; label: string; value: string }) => call<ConnectionsView>("POST", "/api/connections/accounts", a),
   removeAccount: (key: string) => call<ConnectionsView>("DELETE", `/api/connections/accounts/${encodeURIComponent(key)}`),

@@ -11,7 +11,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
     "server": "bun --watch server/index.ts",
-    "messages:relay": "bun run relay/messages-mac.ts"
+    "messages:relay": "bun run relay/messages-mac.ts",
+    "signal:relay": "bun run relay/signal.ts"
   },
   "dependencies": {
     "@agentshit/fountain-sdk": "^1.13.0",

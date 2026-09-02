@@ -36,7 +36,7 @@ if (!(await memory.probe())) {
   memory = null;
   console.warn(`memory: disabled (engram binary "${config.engramBin}" is not answering)`);
 }
-if (!config.publicUrl) console.warn("REFLEX_PUBLIC_URL is not set; agents will not get memory or Messages tools");
+if (!config.publicUrl) console.warn("REFLEX_PUBLIC_URL is not set; agents will not get memory or chat-relay tools");
 
 const api = buildApi({ sql, secret: config.secret, hub, watchers, memory, messages, publicUrl: config.publicUrl });
 await watchers.startAll();

@@ -7,33 +7,19 @@
  * Reflex server. Run it as the same logged-in macOS user as Messages.app.
  */
 import { Database } from "bun:sqlite";
-import { chmod, mkdir } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { defaultConfigPath, errorText, loadPairing, makeUsage, parseArgs, required, serve, type Command } from "./transport";
 
-interface RelayConfig {
-  server: string;
-  token: string;
-  deviceId: string;
-}
+const usage = makeUsage(`Usage:
+  bun run relay/messages-mac.ts --server https://reflex.example --code PAIRING_CODE [--name "Mac mini"]
 
-interface Command {
-  id: string;
-  method: "recent" | "thread" | "search" | "send";
-  params: Record<string, unknown>;
-}
+After the first run, the saved pairing is used automatically:
+  bun run relay/messages-mac.ts`);
 
 async function main(): Promise<never> {
-  const args = parseArgs(process.argv.slice(2));
-  const configPath = args.config ?? join(homedir(), ".config", "reflex", "messages-relay.json");
-  let config = await readConfig(configPath);
-
-  if (args.server && args.code) {
-    config = await pair(args.server, args.code, args.name ?? hostname());
-    await saveConfig(configPath, config);
-    console.log(`Paired ${args.name ?? hostname()} with Reflex. The device token is stored at ${configPath}.`);
-  }
-  if (!config) usage("No saved pairing. Pass --server and --code once.");
+  const args = parseArgs(process.argv.slice(2), usage);
+  const config = await loadPairing("imessage", args, args.config ?? defaultConfigPath("imessage"), usage);
 
   const dbPath = args.database ?? join(homedir(), "Library", "Messages", "chat.db");
   let messages: MacMessages;
@@ -43,44 +29,7 @@ async function main(): Promise<never> {
   } catch (err) {
     usage(`Could not open Messages: ${errorText(err)}\nGrant Full Disk Access to the terminal or Bun, then try again.`);
   }
-
-  console.log(`Connected to ${config.server}. Leave this process running; Ctrl-C stops it.`);
-  let delay = 1000;
-  for (;;) {
-    try {
-      const res = await fetch(`${config.server}/api/messages/relay/poll`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${config.token}`, accept: "application/json" },
-        signal: AbortSignal.timeout(40_000),
-      });
-      if (res.status === 204) {
-        delay = 1000;
-        continue;
-      }
-      if (res.status === 401) usage("This Mac was disconnected from Reflex. Pair it again from the Connections page.");
-      if (!res.ok) throw new Error(`poll returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      const command = (await res.json()) as Command;
-      let result: unknown;
-      let error: string | undefined;
-      try {
-        result = await messages.execute(command);
-      } catch (err) {
-        error = errorText(err);
-      }
-      const done = await fetch(`${config.server}/api/messages/relay/result`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
-        body: JSON.stringify({ id: command.id, result, error }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!done.ok && done.status !== 404) throw new Error(`result returned ${done.status}`);
-      delay = 1000;
-    } catch (err) {
-      console.error(`${new Date().toISOString()} ${errorText(err)}; retrying in ${Math.round(delay / 1000)}s`);
-      await Bun.sleep(delay);
-      delay = Math.min(delay * 2, 15_000);
-    }
-  }
+  return serve("imessage", config, (command) => messages.execute(command), usage);
 }
 
 export class MacMessages {
@@ -94,9 +43,9 @@ export class MacMessages {
   async execute(command: Command): Promise<unknown> {
     const limit = Math.max(1, Number(command.params.limit) || 20);
     if (command.method === "recent") return this.recent(Math.min(limit, 50));
-    if (command.method === "thread") return this.thread(required(command.params.chat_guid, "chat_guid"), Math.min(limit, 100));
+    if (command.method === "thread") return this.thread(required(command.params.chat_id, "chat_id"), Math.min(limit, 100));
     if (command.method === "search") return this.search(required(command.params.query, "query"), Math.min(limit, 100));
-    if (command.method === "send") return this.send(required(command.params.chat_guid, "chat_guid"), required(command.params.text, "text"));
+    if (command.method === "send") return this.send(required(command.params.chat_id, "chat_id"), required(command.params.text, "text"));
     throw new Error(`unknown command ${String(command.method)}`);
   }
 
@@ -235,71 +184,6 @@ function splitParticipants(value: string | null): string[] {
 
 function appleScriptString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]/g, "");
-}
-
-async function pair(server: string, code: string, name: string): Promise<RelayConfig> {
-  const base = server.trim().replace(/\/+$/, "");
-  if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) usage("--server must use HTTPS (HTTP is allowed only for localhost).");
-  const res = await fetch(`${base}/api/messages/relay/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ code: code.trim(), name: name.trim().slice(0, 80) }),
-  });
-  const body = (await res.json().catch(() => ({}))) as Partial<RelayConfig> & { message?: string };
-  if (!res.ok || !body.token || !body.deviceId) usage(body.message ?? `Pairing failed (${res.status}).`);
-  return { server: base, token: body.token, deviceId: body.deviceId };
-}
-
-async function readConfig(path: string): Promise<RelayConfig | null> {
-  try {
-    const parsed = JSON.parse(await Bun.file(path).text()) as RelayConfig;
-    return parsed.server && parsed.token && parsed.deviceId ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function saveConfig(path: string, config: RelayConfig): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await Bun.write(path, JSON.stringify(config, null, 2) + "\n");
-  await chmod(path, 0o600);
-}
-
-function parseArgs(argv: string[]): { server?: string; code?: string; name?: string; config?: string; database?: string } {
-  const out: { server?: string; code?: string; name?: string; config?: string; database?: string } = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const key = argv[i];
-    const value = argv[i + 1];
-    if (key === "--server" && value) out.server = value;
-    else if (key === "--code" && value) out.code = value;
-    else if (key === "--name" && value) out.name = value;
-    else if (key === "--config" && value) out.config = value;
-    else if (key === "--database" && value) out.database = value;
-    else if (key === "--help" || key === "-h") usage();
-    else usage(`Unknown or incomplete option: ${key ?? ""}`);
-    i += 1;
-  }
-  return out;
-}
-
-function required(value: unknown, name: string): string {
-  const s = typeof value === "string" ? value.trim() : "";
-  if (!s) throw new Error(`${name} is required`);
-  return s;
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function usage(error?: string): never {
-  if (error) console.error(error);
-  console.error(`Usage:
-  bun run relay/messages-mac.ts --server https://reflex.example --code PAIRING_CODE [--name "Mac mini"]
-
-After the first run, the saved pairing is used automatically:
-  bun run relay/messages-mac.ts`);
-  process.exit(error ? 1 : 0);
 }
 
 if (import.meta.main) await main();

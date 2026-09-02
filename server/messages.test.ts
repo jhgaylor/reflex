@@ -11,17 +11,37 @@ afterEach(() => {
 });
 
 describe("Messages MCP bridge", () => {
+  test("advertises four tools per app under that app's prefix", async () => {
+    const signal = await bridge.handleMcp("signal", profile, 1, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (signal.body as { result: { tools: Array<{ name: string; inputSchema: { required?: string[] } }> } }).result.tools;
+    expect(tools.map((t) => t.name)).toEqual(["signal_recent", "signal_thread", "signal_search", "signal_send"]);
+    expect(tools[3]!.inputSchema.required).toEqual(["chat_id", "text"]);
+  });
+
+  test("a Signal relay only sees Signal commands, sent with a plain chat_id", async () => {
+    const macPoll = bridge.poll(7, "imessage", "mac-1");
+    const signalPoll = bridge.poll(7, "signal", "box-1");
+    const call = bridge.handleMcp("signal", profile, 7, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "signal_thread", arguments: { chat_id: "+15551234567" } } });
+    const command = (await signalPoll) as RelayCommand;
+    expect(command).toMatchObject({ method: "thread", params: { chat_id: "+15551234567", limit: 30 } });
+    expect(bridge.complete(7, "imessage", command.id, [])).toBe(false);
+    expect(bridge.complete(7, "signal", command.id, [{ text: "hi" }])).toBe(true);
+    expect((await call).status).toBe(200);
+    bridge.close();
+    expect(await macPoll).toBeNull();
+  });
+
   test("advertises the four tools", async () => {
-    const init = await bridge.handleMcp(profile, 1, { jsonrpc: "2.0", id: "i", method: "initialize", params: {} });
+    const init = await bridge.handleMcp("imessage", profile, 1, { jsonrpc: "2.0", id: "i", method: "initialize", params: {} });
     expect((init.body as { result: { serverInfo: { name: string } } }).result.serverInfo.name).toBe("reflex-messages");
-    const listed = await bridge.handleMcp(profile, 1, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const listed = await bridge.handleMcp("imessage", profile, 1, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     const names = (listed.body as { result: { tools: Array<{ name: string }> } }).result.tools.map((t) => t.name);
     expect(names).toEqual(["messages_recent", "messages_thread", "messages_search", "messages_send"]);
   });
 
   test("routes a tool call to the owner's polling Mac", async () => {
-    const poll = bridge.poll(7, "mac-1");
-    const call = bridge.handleMcp(profile, 7, {
+    const poll = bridge.poll(7, "imessage", "mac-1");
+    const call = bridge.handleMcp("imessage", profile, 7, {
       jsonrpc: "2.0",
       id: 9,
       method: "tools/call",
@@ -29,15 +49,15 @@ describe("Messages MCP bridge", () => {
     });
     const command = (await poll) as RelayCommand;
     expect(command).toMatchObject({ method: "search", params: { query: "dentist", limit: 5 } });
-    expect(bridge.complete(8, command.id, [{ text: "wrong owner" }])).toBe(false);
-    expect(bridge.complete(7, command.id, [{ text: "Tuesday works" }])).toBe(true);
+    expect(bridge.complete(8, "imessage", command.id, [{ text: "wrong owner" }])).toBe(false);
+    expect(bridge.complete(7, "imessage", command.id, [{ text: "Tuesday works" }])).toBe(true);
     const answer = await call;
     const text = (answer.body as { result: { content: Array<{ text: string }> } }).result.content[0]!.text;
     expect(text).toContain("Tuesday works");
   });
 
   test("requires explicit confirmation when the sending guardrail is on", async () => {
-    const blocked = await bridge.handleMcp(profile, 1, {
+    const blocked = await bridge.handleMcp("imessage", profile, 1, {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
@@ -47,8 +67,8 @@ describe("Messages MCP bridge", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain("must approve");
 
-    const poll = bridge.poll(1, "mac-1");
-    const allowed = bridge.handleMcp(profile, 1, {
+    const poll = bridge.poll(1, "imessage", "mac-1");
+    const allowed = bridge.handleMcp("imessage", profile, 1, {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
@@ -56,7 +76,7 @@ describe("Messages MCP bridge", () => {
     });
     const command = (await poll) as RelayCommand;
     expect(command.method).toBe("send");
-    bridge.complete(1, command.id, { sent: true });
+    bridge.complete(1, "imessage", command.id, { sent: true });
     expect((await allowed).status).toBe(200);
   });
 });

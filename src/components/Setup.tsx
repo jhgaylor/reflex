@@ -8,7 +8,7 @@ import type { ConnectionsView, Me } from "../../shared/api";
 import { DEFAULT_GUARDRAILS, STARTER_JOBS, type Guardrails } from "../../shared/spec";
 import { api } from "../lib/api";
 import { GuardrailsForm } from "./GuardrailsForm";
-import { AccountsPanel, MessagesPanel, ServicesPanel, TextingPanel } from "./Connections";
+import { AccountsPanel, RelaysPanel, ServicesPanel, TextingPanel } from "./Connections";
 
 type Step = 0 | 1 | 2 | 3;
 
@@ -131,7 +131,7 @@ export function Setup(props: { me: Me; onDone: (m: Me) => void; onSignOut: () =>
             </p>
             {connections ? (
               <>
-                <MessagesPanel view={connections} onChange={setConnections} say={props.say} />
+                <RelaysPanel view={connections} onChange={setConnections} say={props.say} />
                 <ServicesPanel view={connections} onChange={setConnections} say={props.say} />
                 <AccountsPanel view={connections} onChange={setConnections} say={props.say} />
               </>

@@ -26,7 +26,7 @@ test("the Mac relay reads recent chats, threads and literal searches", async () 
   const messages = new MacMessages(path);
   const recent = (await messages.execute({ id: "1", method: "recent", params: { limit: 5 } })) as Array<{ chat_guid: string; participants: string[] }>;
   expect(recent[0]).toMatchObject({ chat_guid: "iMessage;-;+15551234567", participants: ["+15551234567"] });
-  const thread = (await messages.execute({ id: "2", method: "thread", params: { chat_guid: recent[0]!.chat_guid, limit: 5 } })) as Array<{ text: string }>;
+  const thread = (await messages.execute({ id: "2", method: "thread", params: { chat_id: recent[0]!.chat_guid, limit: 5 } })) as Array<{ text: string }>;
   expect(thread.map((m) => m.text)).toEqual(["Tuesday works", "Great, thanks"]);
   const found = (await messages.execute({ id: "3", method: "search", params: { query: "Tuesday", limit: 5 } })) as Array<{ text: string }>;
   expect(found.map((m) => m.text)).toEqual(["Tuesday works"]);

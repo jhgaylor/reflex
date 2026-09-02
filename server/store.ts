@@ -7,7 +7,7 @@
  * a request. Migrations are `create ... if not exists`, applied at boot.
  */
 import type { JobStatus, NotifyKind } from "../shared/protocol";
-import { DEFAULT_GUARDRAILS, type Profile } from "../shared/spec";
+import { DEFAULT_GUARDRAILS, RELAY_KINDS, type Profile, type RelayKind } from "../shared/spec";
 import type { SetupStep } from "../shared/api";
 import crypto from "node:crypto";
 import { open, seal } from "./secretbox";
@@ -109,6 +109,9 @@ const SCHEMA: string[] = [
      revoked_at timestamptz
    )`,
   `create index if not exists message_devices_user_idx on message_devices (user_id, created_at desc)`,
+  // Which chat app the relay speaks for; the first relays were Messages-only.
+  `alter table message_pairings add column if not exists kind text not null default 'imessage'`,
+  `alter table message_devices add column if not exists kind text not null default 'imessage'`,
   `create table if not exists outbox (
      id serial primary key,
      user_id integer not null references users(id) on delete cascade,
@@ -309,6 +312,7 @@ export async function markMemoryProvisioned(sql: Sql, userId: number): Promise<v
 
 export interface MessageDeviceRow {
   id: string;
+  kind: RelayKind;
   name: string;
   createdAt: Date;
   lastSeenAt: Date | null;
@@ -330,12 +334,12 @@ export async function userByMessagesToken(sql: Sql, token: string): Promise<User
   return rows[0] ? toUser(rows[0]) : null;
 }
 
-/** One ten-minute code shown in the browser and claimed by the Mac. */
-export async function createMessagePairing(sql: Sql, userId: number): Promise<{ code: string; expiresAt: Date }> {
+/** One ten-minute code shown in the browser and claimed by the relay host. */
+export async function createMessagePairing(sql: Sql, userId: number, kind: RelayKind = "imessage"): Promise<{ code: string; expiresAt: Date }> {
   const code = crypto.randomBytes(9).toString("base64url").toUpperCase();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await sql`delete from message_pairings where user_id = ${userId} or expires_at < now()`;
-  await sql`insert into message_pairings (code_digest, user_id, expires_at) values (${tokenDigest(code)}, ${userId}, ${expiresAt})`;
+  await sql`delete from message_pairings where (user_id = ${userId} and kind = ${kind}) or expires_at < now()`;
+  await sql`insert into message_pairings (code_digest, user_id, kind, expires_at) values (${tokenDigest(code)}, ${userId}, ${kind}, ${expiresAt})`;
   return { code, expiresAt };
 }
 
@@ -345,17 +349,18 @@ export async function claimMessagePairing(
   code: string,
   name: string,
 ): Promise<{ user: User; device: MessageDeviceRow; token: string } | null> {
-  const rows = await sql<{ user_id: number | string }>`
+  const rows = await sql<{ user_id: number | string; kind: string }>`
     update message_pairings set used_at = now()
     where code_digest = ${tokenDigest(code.trim().toUpperCase())} and used_at is null and expires_at > now()
-    returning user_id`;
+    returning user_id, kind`;
   if (!rows[0]) return null;
   const userId = Number(rows[0].user_id);
+  const kind = toRelayKind(rows[0].kind);
   const token = newSecretToken();
   const id = crypto.randomUUID();
   const made = await sql`
-    insert into message_devices (id, user_id, name, token_digest)
-    values (${id}, ${userId}, ${name.slice(0, 80)}, ${tokenDigest(token)}) returning *`;
+    insert into message_devices (id, user_id, kind, name, token_digest)
+    values (${id}, ${userId}, ${kind}, ${name.slice(0, 80)}, ${tokenDigest(token)}) returning *`;
   const user = await userById(sql, userId);
   return user && made[0] ? { user, device: toMessageDevice(made[0]), token } : null;
 }
@@ -371,8 +376,10 @@ export async function touchMessageDevice(sql: Sql, id: string): Promise<void> {
   await sql`update message_devices set last_seen_at = now() where id = ${id} and revoked_at is null`;
 }
 
-export async function listMessageDevices(sql: Sql, userId: number): Promise<MessageDeviceRow[]> {
-  const rows = await sql`select * from message_devices where user_id = ${userId} and revoked_at is null order by created_at desc`;
+export async function listMessageDevices(sql: Sql, userId: number, kind?: RelayKind): Promise<MessageDeviceRow[]> {
+  const rows = kind
+    ? await sql`select * from message_devices where user_id = ${userId} and kind = ${kind} and revoked_at is null order by created_at desc`
+    : await sql`select * from message_devices where user_id = ${userId} and revoked_at is null order by created_at desc`;
   return rows.map(toMessageDevice);
 }
 
@@ -380,9 +387,14 @@ export async function revokeMessageDevice(sql: Sql, userId: number, id: string):
   await sql`update message_devices set revoked_at = now() where user_id = ${userId} and id = ${id}`;
 }
 
+function toRelayKind(value: unknown): RelayKind {
+  return (RELAY_KINDS as readonly string[]).includes(String(value)) ? (value as RelayKind) : "imessage";
+}
+
 function toMessageDevice(r: Record<string, unknown>): MessageDeviceRow {
   return {
     id: String(r.id),
+    kind: toRelayKind(r.kind),
     name: String(r.name),
     createdAt: new Date(r.created_at as string),
     lastSeenAt: r.last_seen_at ? new Date(r.last_seen_at as string) : null,

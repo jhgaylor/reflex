@@ -23,7 +23,7 @@ import {
 } from "@agentshit/fountain-sdk";
 import type { AssistantView, RoutineView, TurnView } from "../shared/api";
 import { stripUpdate } from "../shared/protocol";
-import { AGENT_RUNTIME, DEFAULT_MODEL, agentName, systemPrompt, type ConnectedAccount, type Profile } from "../shared/spec";
+import { AGENT_RUNTIME, DEFAULT_MODEL, RELAY_CHANNELS, RELAY_KINDS, agentName, systemPrompt, type ConnectedAccount, type Profile, type RelayKind } from "../shared/spec";
 
 export type { Teammate, LogEvent, Block };
 
@@ -80,10 +80,10 @@ export async function hire(
   f: Fountain,
   userId: string,
   profile: Profile,
-  opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[]; memory?: MemoryAttachment | null; messages?: MessagesAttachment | null },
+  opts: { vaultId?: string | null; environmentId?: string | null; connected?: ConnectedAccount[]; memory?: MemoryAttachment | null; relays?: RelayAttachments },
 ): Promise<Hired> {
   const name = agentName(userId);
-  const system = systemPrompt(profile, opts.connected ?? [], Boolean(opts.memory), Boolean(opts.messages));
+  const system = systemPrompt(profile, opts.connected ?? [], Boolean(opts.memory), attachedKinds(opts.relays ?? {}));
   let agent = (await f.agents.list(name)).find((a) => a.name === name) ?? null;
   if (agent) {
     if (agent.system !== system) agent = await f.agents.update(agent.id, { system });
@@ -372,18 +372,17 @@ export interface MemoryAttachment {
   token: string;
 }
 
-/** How the paired-Mac MCP bridge is attached. */
-export interface MessagesAttachment {
-  url: string;
-  token: string;
-}
+/** How each paired chat relay's MCP bridge is attached, by kind; absent means not paired. */
+export type RelayAttachments = Partial<Record<RelayKind, MemoryAttachment | null>>;
+
+const attachedKinds = (relays: RelayAttachments): RelayKind[] => RELAY_KINDS.filter((k) => Boolean(relays[k]));
 
 /**
  * Point the agent at the active connections and its memory. No-op when
  * nothing changed. Google gets a bare `{connection}`
  * `mcp_servers` entry (it resolves to Fountain's Gmail-served MCP server,
  * which refuses other providers — every other token is brokered into the
- * sandbox env automatically). Messages and memory use Reflex-hosted MCP
+ * sandbox env automatically). Chat relays and memory use Reflex-hosted MCP
  * bridges, and the system prompt tells the agent which accounts and tools it
  * holds, or it would never know they exist.
  */
@@ -394,7 +393,7 @@ export async function syncServices(
   providers: ConnectionProvider[],
   connections: Connection[],
   memory: MemoryAttachment | null = null,
-  messages: MessagesAttachment | null = null,
+  relays: RelayAttachments = {},
 ): Promise<void> {
   const desired: Record<string, unknown> = {};
   for (const c of connections) {
@@ -402,8 +401,11 @@ export async function syncServices(
     desired.gmail ??= { connection: c.id };
   }
   if (memory) desired.memory = { type: "http", url: memory.url, headers: { Authorization: `Bearer ${memory.token}` } };
-  if (messages) desired.messages = { type: "http", url: messages.url, headers: { Authorization: `Bearer ${messages.token}` } };
-  const system = systemPrompt(profile, connectedAccounts(providers, connections), Boolean(memory), Boolean(messages));
+  for (const kind of attachedKinds(relays)) {
+    const a = relays[kind]!;
+    desired[RELAY_CHANNELS[kind].mcpPath] = { type: "http", url: a.url, headers: { Authorization: `Bearer ${a.token}` } };
+  }
+  const system = systemPrompt(profile, connectedAccounts(providers, connections), Boolean(memory), attachedKinds(relays));
   const agent = await f.agents.get(agentId);
   const current = (agent.mcp_servers ?? {}) as Record<string, unknown>;
   const same =
