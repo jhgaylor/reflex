@@ -195,22 +195,33 @@ function toMillis(ts: WAMessage["messageTimestamp"] | undefined): number {
 /** One Baileys connection that files everything into the store and reconnects until it is logged out. */
 class WhatsApp {
   private sock: WASocket | null = null;
-  private opened: Promise<void> | null = null;
+  private ready: { promise: Promise<void>; resolve: () => void; reject: (e: Error) => void } | null = null;
+  private everOpened = false;
 
   constructor(
     private authDir: string,
     private store: WhatsAppStore,
   ) {}
 
+  /** Baileys never flips `creds.registered`; a linked session is one that knows who it is. */
   async registered(): Promise<boolean> {
     const { state } = await useMultiFileAuthState(this.authDir);
-    return Boolean(state.creds.registered);
+    return Boolean(state.creds.me?.id);
   }
 
   /** Resolves once the socket is open; keeps reconnecting in the background afterwards. */
   connect(onQr?: (qr: string) => void): Promise<void> {
-    if (!this.opened) this.opened = this.open(onQr);
-    return this.opened;
+    if (!this.ready) {
+      let resolve!: () => void;
+      let reject!: (e: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      this.ready = { promise, resolve, reject };
+      void this.open(onQr);
+    }
+    return this.ready.promise;
   }
 
   async send(chatId: string, text: string): Promise<WAMessage | undefined> {
@@ -263,42 +274,36 @@ class WhatsApp {
       }
     };
 
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
-        if (qr && onQr) onQr(qr);
-        if (connection === "open") {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-          console.log("WhatsApp connected.");
-          void refreshGroups();
-          groupTimer ??= setInterval(refreshGroups, GROUP_REFRESH_MS);
-          groupTimer.unref();
+    sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+      if (qr && onQr) onQr(qr);
+      if (connection === "open") {
+        this.everOpened = true;
+        this.ready?.resolve();
+        console.log("WhatsApp connected.");
+        void refreshGroups();
+        groupTimer ??= setInterval(refreshGroups, GROUP_REFRESH_MS);
+        groupTimer.unref();
+      }
+      if (connection === "close") {
+        if (groupTimer) clearInterval(groupTimer);
+        this.sock = null;
+        const code = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
+        if (code === DisconnectReason.loggedOut) {
+          const msg = "WhatsApp logged this device out. Remove the auth directory and run --link again.";
+          if (this.everOpened) usage(msg);
+          this.ready?.reject(new Error(msg));
+          return;
         }
-        if (connection === "close") {
-          if (groupTimer) clearInterval(groupTimer);
-          this.sock = null;
-          const code = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
-          if (code === DisconnectReason.loggedOut) {
-            const msg = "WhatsApp logged this device out. Remove the auth directory and run --link again.";
-            if (!settled) reject(new Error(msg));
-            else usage(msg);
-            return;
-          }
-          if (!settled) {
-            settled = true;
-            reject(new Error(`WhatsApp closed the connection (${code ?? "unknown"}): ${errorText(lastDisconnect?.error)}`));
-            return;
-          }
-          console.error(`${new Date().toISOString()} WhatsApp disconnected (${code ?? "unknown"}); reconnecting in 5s`);
-          setTimeout(() => {
-            this.opened = null;
-            this.connect().catch((err) => console.error(`reconnect failed: ${errorText(err)}`));
-          }, 5000);
+        // WhatsApp always drops a freshly paired socket with 515 and expects an immediate reconnect.
+        const restart = code === DisconnectReason.restartRequired;
+        if (!restart && !this.everOpened) {
+          this.ready?.reject(new Error(`WhatsApp closed the connection (${code ?? "unknown"}): ${errorText(lastDisconnect?.error)}`));
+          return;
         }
-      });
+        const delay = restart ? 500 : 5000;
+        console.error(`${new Date().toISOString()} WhatsApp ${restart ? "asked for a restart" : `disconnected (${code ?? "unknown"})`}; reconnecting`);
+        setTimeout(() => void this.open(onQr), delay);
+      }
     });
   }
 }
