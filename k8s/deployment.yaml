@@ -25,7 +25,7 @@ spec:
       containers:
         - name: web
           # Pinned to an immutable sha tag by .github/workflows/build.yml.
-          image: ghcr.io/jhgaylor/reflex:sha-6e635b96def7149015d5c4ebc957251f9e6e6a19
+          image: ghcr.io/jhgaylor/reflex:sha-f58ba0219cd309028914668d022737493f36a28a
           ports:
             - containerPort: 8080
           envFrom:
