@@ -81,9 +81,10 @@ describe("systemPrompt", () => {
 
   test("with chat relays attached, texts are untrusted and confirmation is explicit", () => {
     const profile = { name: "Jake", timezone: "UTC", about: "", guardrails: DEFAULT_GUARDRAILS };
-    const p = systemPrompt(profile, [], false, ["imessage", "signal"]);
+    const p = systemPrompt(profile, [], false, ["imessage", "signal", "whatsapp"]);
     expect(p).toContain("`messages_*` tools");
     expect(p).toContain("`signal_*` tools");
+    expect(p).toContain("`whatsapp_*` tools");
     expect(p).toContain("never set `confirmed`");
     expect(p).toContain("text, chat message");
     const only = systemPrompt(profile, [], false, ["signal"]);

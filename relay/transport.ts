@@ -8,7 +8,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
-export type RelayKind = "imessage" | "signal";
+export type RelayKind = "imessage" | "signal" | "whatsapp";
 
 export interface RelayConfig {
   server: string;
@@ -29,6 +29,8 @@ export interface RelayArgs {
   config?: string;
   database?: string;
   account?: string;
+  /** where the WhatsApp relay keeps its session keys */
+  auth?: string;
   link?: boolean;
   help?: boolean;
 }
@@ -36,7 +38,7 @@ export interface RelayArgs {
 /** `--key value` options plus a few flags; anything else is a usage error. */
 export function parseArgs(argv: string[], usage: (error?: string) => never): RelayArgs {
   const out: RelayArgs = {};
-  const valued = new Set(["server", "code", "name", "config", "database", "account"]);
+  const valued = new Set(["server", "code", "name", "config", "database", "account", "auth"]);
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i] ?? "";
     const name = key.replace(/^--/, "") as keyof RelayArgs;

@@ -8,10 +8,10 @@
  * SQLite file; history starts the moment the device was linked. It only
  * makes outbound HTTPS requests to the Reflex server.
  */
-import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { History, type Who } from "./history";
 import { defaultConfigPath, errorText, loadPairing, makeUsage, parseArgs, required, serve, type Command } from "./transport";
 
 const CONTACT_REFRESH_MS = 15 * 60 * 1000;
@@ -120,38 +120,13 @@ interface GroupRow {
   name?: string | null;
 }
 
-interface StoredMessage {
-  id: string;
-  chat_id: string;
-  sender: string | null;
-  sender_name: string | null;
-  text: string;
-  at: number;
-  from_me: number;
-  has_attachments: number;
-}
-
-export class SignalStore {
-  private db: Database;
-
-  constructor(path: string) {
-    this.db = new Database(path, { create: true, strict: true });
-    this.db.run("pragma journal_mode = wal");
-    this.db.run(`create table if not exists chats (id text primary key, name text, is_group integer not null default 0, last_at integer not null default 0)`);
-    this.db.run(`create table if not exists contacts (id text primary key, number text, name text)`);
-    this.db.run(`create table if not exists messages (
-      id text primary key, chat_id text not null, sender text, sender_name text, text text not null,
-      at integer not null, from_me integer not null default 0, has_attachments integer not null default 0
-    )`);
-    this.db.run("create index if not exists messages_chat_idx on messages (chat_id, at)");
-  }
-
+export class SignalStore extends History {
   /** Files an incoming, edited or phone-sent message; everything else (receipts, typing, reactions) is dropped. */
   ingest(envelope: Envelope): void {
     const sent = envelope.syncMessage?.sentMessage;
     if (sent) {
       const chat = sent.groupInfo?.groupId ? `group:${sent.groupInfo.groupId}` : this.canon(sent.destinationNumber ?? sent.destination, sent.destinationUuid);
-      if (chat) this.file(chat, sent, { fromMe: true, sender: null, senderName: null });
+      if (chat) this.fileData(chat, sent, { fromMe: true, sender: null, senderName: null });
       return;
     }
     const edit = envelope.editMessage;
@@ -160,111 +135,33 @@ export class SignalStore {
     const sender = this.canon(envelope.sourceNumber ?? envelope.source, envelope.sourceUuid);
     const chat = data.groupInfo?.groupId ? `group:${data.groupInfo.groupId}` : sender;
     if (!chat) return;
+    // An edit is keyed by the original send time, so filing it under that time replaces the text.
     const at = edit?.targetSentTimestamp ?? data.timestamp;
-    this.file(chat, { ...data, timestamp: at }, { fromMe: false, sender, senderName: envelope.sourceName ?? null });
+    this.fileData(chat, { ...data, timestamp: at }, { fromMe: false, sender, senderName: envelope.sourceName ?? null });
   }
 
-  private file(chat: string, data: DataMessage, who: { fromMe: boolean; sender: string | null; senderName: string | null }): void {
+  private fileData(chat: string, data: DataMessage, who: Who): void {
     if (data.reaction || data.remoteDelete || data.groupInfo?.type === "UPDATE") return;
-    const attachments = data.attachments?.length ?? 0;
-    const text = data.message?.trim() || (attachments ? "[attachment]" : "");
-    if (!text) return;
-    const at = Number(data.timestamp) || Date.now();
-    const id = `${chat}|${who.fromMe ? "me" : who.sender}|${at}`;
-    this.db.run(
-      `insert into messages (id, chat_id, sender, sender_name, text, at, from_me, has_attachments) values (?, ?, ?, ?, ?, ?, ?, ?)
-       on conflict (id) do update set text = excluded.text, has_attachments = excluded.has_attachments`,
-      [id, chat, who.sender, who.senderName, text, at, who.fromMe ? 1 : 0, attachments ? 1 : 0],
-    );
-    this.touchChat(chat, at, who.senderName);
-  }
-
-  recordOwn(chat: string, at: number, text: string): void {
-    this.file(chat, { timestamp: at, message: text }, { fromMe: true, sender: null, senderName: null });
+    this.file(chat, chat.startsWith("group:"), { at: Number(data.timestamp) || Date.now(), text: data.message, attachments: data.attachments?.length ?? 0 }, who);
   }
 
   rememberContacts(rows: ContactRow[]): void {
     for (const c of rows) {
-      const id = c.number ?? c.uuid;
-      if (!id) continue;
       const name = c.name?.trim() || [c.profile?.givenName, c.profile?.familyName].filter(Boolean).join(" ").trim() || null;
-      if (c.uuid) this.db.run("insert into contacts (id, number, name) values (?, ?, ?) on conflict (id) do update set number = excluded.number, name = excluded.name", [c.uuid, c.number ?? null, name]);
-      if (c.number) this.db.run("insert into contacts (id, number, name) values (?, ?, ?) on conflict (id) do update set name = excluded.name", [c.number, c.number, name]);
-      if (name) this.db.run("update chats set name = ? where id = ? and is_group = 0", [name, id]);
+      if (c.uuid) this.rememberContact(c.uuid, c.number ?? null, name);
+      if (c.number) this.rememberContact(c.number, c.number, name);
     }
   }
 
   rememberGroups(rows: GroupRow[]): void {
-    for (const g of rows) {
-      if (!g.id) continue;
-      this.db.run("insert into chats (id, name, is_group, last_at) values (?, ?, 1, 0) on conflict (id) do update set name = coalesce(excluded.name, chats.name)", [`group:${g.id}`, g.name ?? null]);
-    }
-  }
-
-  knowsChat(id: string): boolean {
-    return Boolean(this.db.query("select 1 from chats where id = ?").get(id)) || Boolean(this.db.query("select 1 from contacts where id = ?").get(id));
-  }
-
-  recent(limit: number): unknown[] {
-    const rows = this.db.query<{ id: string; name: string | null; is_group: number; last_at: number }, [number]>("select * from chats where last_at > 0 order by last_at desc limit ?").all(limit);
-    const latest = this.db.query<StoredMessage, [string]>("select * from messages where chat_id = ? order by at desc limit 1");
-    return rows.map((c) => ({
-      chat_id: c.id,
-      chat_name: this.chatName(c.id, c.name),
-      is_group: Boolean(c.is_group),
-      last_at: new Date(c.last_at).toISOString(),
-      latest: normalize(latest.get(c.id)),
-    }));
-  }
-
-  thread(chatId: string, limit: number): unknown[] {
-    const rows = this.db.query<StoredMessage, [string, number]>("select * from messages where chat_id = ? order by at desc limit ?").all(chatId, limit);
-    return rows.reverse().map((m) => normalize(m));
-  }
-
-  search(query: string, limit: number): unknown[] {
-    const rows = this.db
-      .query<StoredMessage & { chat_name: string | null }, [string, number]>(
-        `select m.*, c.name as chat_name from messages m left join chats c on c.id = m.chat_id
-          where instr(lower(m.text), lower(?)) > 0 order by m.at desc limit ?`,
-      )
-      .all(query, limit);
-    return rows.map((m) => ({ ...normalize(m), chat_id: m.chat_id, chat_name: this.chatName(m.chat_id, m.chat_name) }));
+    for (const g of rows) if (g.id) this.rememberGroup(`group:${g.id}`, g.name ?? null);
   }
 
   /** A phone number when signal-cli knows one, otherwise the account UUID. */
   private canon(number: string | null | undefined, uuid: string | null | undefined): string | null {
     if (number) return number;
-    if (!uuid) return null;
-    const known = this.db.query<{ number: string | null }, [string]>("select number from contacts where id = ?").get(uuid);
-    return known?.number ?? uuid;
+    return uuid ? this.resolve(uuid) : null;
   }
-
-  private chatName(id: string, stored: string | null): string {
-    if (stored) return stored;
-    const contact = this.db.query<{ name: string | null }, [string]>("select name from contacts where id = ?").get(id);
-    return contact?.name ?? (id.startsWith("group:") ? "Unnamed group" : id);
-  }
-
-  private touchChat(id: string, at: number, senderName: string | null): void {
-    const name = id.startsWith("group:") ? null : senderName;
-    this.db.run(
-      `insert into chats (id, name, is_group, last_at) values (?, ?, ?, ?)
-       on conflict (id) do update set last_at = max(chats.last_at, excluded.last_at), name = coalesce(chats.name, excluded.name)`,
-      [id, name, id.startsWith("group:") ? 1 : 0, at],
-    );
-  }
-}
-
-function normalize(m: StoredMessage | null): Record<string, unknown> | null {
-  if (!m) return null;
-  return {
-    text: m.text,
-    at: new Date(m.at).toISOString(),
-    from_me: Boolean(m.from_me),
-    sender: m.from_me ? "me" : m.sender_name || m.sender,
-    has_attachments: Boolean(m.has_attachments),
-  };
 }
 
 // ── signal-cli ─────────────────────────────────────────────────────────────

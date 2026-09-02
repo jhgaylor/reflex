@@ -39,6 +39,12 @@ const RELAY_COPY: Record<RelayKind, { hostNoun: string; pitch: string; where: st
     where: "On the computer you linked with `bun run signal:relay -- --link`, open this Reflex checkout and run:",
     fineprint: "Signal keys stay on that computer; Reflex only sees what the relay answers.",
   },
+  whatsapp: {
+    hostNoun: "relay",
+    pitch: "Pair a computer linked to your phone as a WhatsApp device to let Reflex read your WhatsApp chats and, with your approval, reply as you. Recent history comes across when you link.",
+    where: "On the computer you linked with `bun run whatsapp:relay -- --link`, open this Reflex checkout and run:",
+    fineprint: "WhatsApp session keys stay on that computer; Reflex only sees what the relay answers. This uses the WhatsApp Web protocol through an unofficial client, which WhatsApp's terms do not allow.",
+  },
 };
 
 /** One card per chat app the owner can pair a relay for. Shared with the setup wizard. */

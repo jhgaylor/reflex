@@ -42,6 +42,7 @@ interface WaitingPoll {
 const PROSE: Record<RelayKind, { app: string; where: string }> = {
   imessage: { app: "Messages", where: "from their paired Mac" },
   signal: { app: "Signal", where: "from their paired Signal relay (history starts when the relay was linked)" },
+  whatsapp: { app: "WhatsApp", where: "from their paired WhatsApp relay" },
 };
 
 export function toolsFor(kind: RelayKind) {

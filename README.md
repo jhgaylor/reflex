@@ -26,6 +26,7 @@ translates every Fountain concept into the owner's vocabulary:
 | Texting | the team-comms contact (`POST /api/team/:id/contact`), gated on the `team_comms` flag |
 | Personal Messages | a paired Mac relay; read-only `chat.db` queries and approval-gated Messages automation exposed to the agent through `/api/mcp/messages` |
 | Signal | a paired signal-cli relay (linked device); relay-kept history and approval-gated sends exposed through `/api/mcp/signal` |
+| WhatsApp | a paired Baileys relay (linked device); relay-kept history and approval-gated sends exposed through `/api/mcp/whatsapp` |
 | Accounts | a per-person vault; values write-only, labels in Postgres |
 | Rules | guardrails compiled into the system prompt (`shared/spec.ts`) |
 
@@ -109,6 +110,29 @@ History starts when the device was linked; messages the owner sends from
 their phone arrive as sync messages and are stored too. Contact and group
 names refresh every fifteen minutes. Reactions, receipts and group updates
 are dropped; attachments are recorded as `[attachment]`.
+
+## WhatsApp (proof of concept)
+
+WhatsApp rides the same relay transport through
+[Baileys](https://github.com/WhiskeySockets/Baileys), which speaks the
+WhatsApp Web multi-device protocol as a linked companion device. Session keys
+live on the relay host under `~/.local/share/reflex/whatsapp-auth`. Any
+always-on machine works. Baileys is an unofficial client and WhatsApp's terms
+do not allow those; accounts that send heavily through such clients do get
+banned, so the sending guardrail matters here.
+
+1. From this checkout run `bun run whatsapp:relay -- --link`, then on the
+   phone open **WhatsApp → Settings → Linked devices → Link a device** and
+   scan the QR code. The relay stays up briefly to file the recent history
+   WhatsApp sends a new device.
+2. Open **Connections → WhatsApp → Pair a relay** in Reflex and run the
+   command it shows on the relay host. Leave `bun run whatsapp:relay` running.
+
+History lives in `~/.local/share/reflex/whatsapp-history.sqlite`. Chat ids
+are WhatsApp JIDs (`15551234567@s.whatsapp.net`, groups end in `@g.us`);
+LID-addressed messages are folded onto the phone-number id whenever WhatsApp
+says which is which. Captions are kept, other media is recorded by type, and
+reactions, receipts and system messages are dropped.
 
 ## Ship
 

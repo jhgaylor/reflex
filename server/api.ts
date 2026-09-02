@@ -256,10 +256,11 @@ export function buildApi(deps: ApiDeps): Handler {
     }
 
     // ── Chat-relay MCP bridges (agent bearer, no browser cookie) ─────────
-    const mcp = path.match(/^\/api\/mcp\/(messages|signal)$/);
-    if (mcp) {
+    const mcp = path.match(/^\/api\/mcp\/([a-z]+)$/);
+    const mcpKind = mcp ? RELAY_KINDS.find((k) => RELAY_CHANNELS[k].mcpPath === mcp[1]) : undefined;
+    if (mcpKind) {
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
-      const kind = RELAY_KINDS.find((k) => RELAY_CHANNELS[k].mcpPath === mcp[1])!;
+      const kind = mcpKind;
       const auth = req.headers.get("authorization") ?? "";
       const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
       const owner = bearer ? await store.userByMessagesToken(sql, bearer) : null;
@@ -271,10 +272,11 @@ export function buildApi(deps: ApiDeps): Handler {
 
     // ── Paired relay transport (device bearer, no browser cookie). The
     // /api/messages/relay/* spelling is what the first Mac relays call. ────
-    const relay = path.match(/^\/api\/(?:messages\/relay|relay\/(imessage|signal))\/(pair|poll|result)$/);
-    if (relay) {
+    const relay = path.match(/^\/api\/(?:messages\/relay|relay\/([a-z]+))\/(pair|poll|result)$/);
+    const relayKind = relay ? (relay[1] === undefined ? "imessage" : RELAY_KINDS.find((k) => k === relay[1])) : undefined;
+    if (relay && relayKind) {
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
-      const kind: RelayKind = (relay[1] as RelayKind | undefined) ?? "imessage";
+      const kind: RelayKind = relayKind;
       if (relay[2] === "pair") {
         const b = (await req.json().catch(() => ({}))) as { code?: string; name?: string };
         const claimed = b.code ? await store.claimMessagePairing(sql, b.code, (b.name ?? "Relay").trim() || "Relay") : null;
@@ -516,9 +518,10 @@ export function buildApi(deps: ApiDeps): Handler {
           if (user.agentId) await revokeContact(f, user.agentId);
           return json(await connections(user, f));
         }
-        const rp = path.match(/^\/api\/connections\/relays\/(imessage|signal)\/pair$/);
-        if (rp && req.method === "POST") {
-          const pairing = await store.createMessagePairing(sql, user.id, rp[1] as RelayKind);
+        const rp = path.match(/^\/api\/connections\/relays\/([a-z]+)\/pair$/);
+        const pairKind = rp ? RELAY_KINDS.find((k) => k === rp[1]) : undefined;
+        if (pairKind && req.method === "POST") {
+          const pairing = await store.createMessagePairing(sql, user.id, pairKind);
           return json({ code: pairing.code, expiresAt: pairing.expiresAt.toISOString() } satisfies MessagePairingView, 201);
         }
         const rm = path.match(/^\/api\/connections\/relays\/([^/]+)$/);
