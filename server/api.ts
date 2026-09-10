@@ -3,7 +3,7 @@
  * the session to a person, builds a Fountain client with that person's own
  * key, and translates both ways.
  */
-import { Fountain } from "@agentshit/fountain-sdk";
+import { Fountain } from "@managoat/fountain-sdk";
 import type { ConnectionsView, JobView, Me, MemoryEntryView, MemoryPage, MessagePairingView, NotificationView, PlanView, ServiceView, StreamEvent, ThreadView } from "../shared/api";
 import type { JobStatus } from "../shared/protocol";
 import { DEFAULT_GUARDRAILS, RELAY_CHANNELS, RELAY_KINDS, relayedPrompt, type Guardrails, type Profile, type RelayKind } from "../shared/spec";

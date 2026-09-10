@@ -16,7 +16,7 @@
     "whatsapp:relay": "bun run relay/whatsapp.ts"
   },
   "dependencies": {
-    "@agentshit/fountain-sdk": "^1.13.0",
+    "@managoat/fountain-sdk": "^1.25.0",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0",
