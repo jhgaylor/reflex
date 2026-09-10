@@ -6,7 +6,7 @@
  * memory and notifications land in the database, whether or not a tab is
  * open. Pages that are open get the same events over /api/stream.
  */
-import type { Fountain } from "@agentshit/fountain-sdk";
+import type { Fountain } from "@managoat/fountain-sdk";
 import type { AssistantView, NotificationView, StreamEvent } from "../shared/api";
 import { parseUpdate } from "../shared/protocol";
 import { absorb, busy, fold, presence, roster, type LogEvent } from "./fountain";

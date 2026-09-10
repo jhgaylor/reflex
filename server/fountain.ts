@@ -20,7 +20,7 @@ import {
   type ConnectionProvider,
   type LogEvent,
   type Teammate,
-} from "@agentshit/fountain-sdk";
+} from "@managoat/fountain-sdk";
 import type { AssistantView, RoutineView, TurnView } from "../shared/api";
 import { stripUpdate } from "../shared/protocol";
 import { AGENT_RUNTIME, DEFAULT_MODEL, RELAY_CHANNELS, RELAY_KINDS, agentName, systemPrompt, type ConnectedAccount, type Profile, type RelayKind } from "../shared/spec";
